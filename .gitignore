@@ -205,3 +205,8 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+
+#file
+note.txt
+Model/gpt2-it-ticket-classifier
