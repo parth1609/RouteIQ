@@ -83,6 +83,8 @@ requests-toolbelt
 zammad_py
 zenpy
 
+streamlit>=1.28.0
+
 tqdm
 matplotlib
 pillow

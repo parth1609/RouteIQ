@@ -93,21 +93,40 @@ class ZendeskIntegration:
         return None
 
     def create_user(self, email, name, role):
-        print(f"Creating a new user with email '{email}'.")
-        user = User(name=name, email=email, role=role)
-        return self.zenpy_client.users.create(user)
+        print(f"Creating a new user with email '{email}' with role '{role}'.")
+        try:
+            user = User(name=name, email=email, role=role)
+            return self.zenpy_client.users.create(user)
+        except Exception as e:
+            error_str = str(e)
+            if "MaxAgentExceeded" in error_str and role == 'agent':
+                print(f"⚠️ Agent limit exceeded. Cannot create agent user '{email}'. Ticket will be created without assignee.")
+                return None
+            else:
+                print(f"❌ Failed to create user '{email}': {error_str}")
+                raise e
 
-    def create_ticket_with_classification(self, customer_email, customer_name, assignee_email, assignee_name, ticket_subject, ticket_description):
+    def create_ticket_with_classification(self, customer_email, customer_name, assignee_email, assignee_name, ticket_subject, ticket_description, auto_proceed=True):
         """
         Creates a new ticket with automated classification of priority and department.
+        
+        Args:
+            auto_proceed (bool): If True, automatically proceed with AI classification without user confirmation
         """
         customer = self.search_user(customer_email)
         if not customer:
             customer = self.create_user(customer_email, customer_name, 'end-user')
 
-        assignee = self.search_user(assignee_email)
-        if not assignee:
-            assignee = self.create_user(assignee_email, assignee_name, 'agent')
+        assignee = None
+        if assignee_email:
+            assignee = self.search_user(assignee_email)
+            if not assignee:
+                try:
+                    assignee = self.create_user(assignee_email, assignee_name, 'agent')
+                except Exception as e:
+                    print(f"⚠️ Could not create assignee user: {str(e)}")
+                    print("Ticket will be created without assignee.")
+                    assignee = None
 
         priority = "normal"
         department = "IT Support"
@@ -121,29 +140,31 @@ class ZendeskIntegration:
                 department = classification_result.get("Department", "IT Support")
                 print(f"Classified Priority: {priority}")
                 print(f"Classified Department: {department}")
-
-                proceed = input("Proceed with this information? (yes/no): ").strip().lower()
-                if proceed != 'yes':
-                    priority = input("Enter priority: ").strip()
-                    department = input("Enter department: ").strip()
+                
+                # Auto-proceed with classification in web application context
+                if auto_proceed:
+                    print("Auto-proceeding with AI classification...")
+                else:
+                    # This would only be used in command-line context
+                    print("Using AI classification results")
             else:
                 print(f"Classification failed: {classification_result.get('error', 'Unknown error')}")
         else:
             print("Classification model not available. Using default values.")
 
-        if customer and assignee:
+        if customer:
             ticket = Ticket(
                 subject=ticket_subject,
                 description=ticket_description,
                 requester_id=customer.id,
-                assignee_id=assignee.id,
+                assignee_id=assignee.id if assignee else None,
                 priority=priority
             )
             created_ticket = self.zenpy_client.tickets.create(ticket)
             print(f"Ticket created successfully with ID: {created_ticket.ticket.id}")
             return created_ticket
         else:
-            print("Could not create ticket. Customer or assignee not found or created.")
+            print("Could not create ticket. Customer not found or created.")
             return None
 
     def _print_ticket_details(self, ticket):
