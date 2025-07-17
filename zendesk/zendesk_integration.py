@@ -1,10 +1,9 @@
-
 import os
 import json
-from dotenv import load_dotenv, find_dotenv
+from dotenv import load_dotenv
 from zenpy import Zenpy
 from zenpy.lib.api_objects import Ticket, User
-from Model.evaluation import ITTicketEvaluator
+from groq import Groq
 
 class ZendeskIntegration:
     def __init__(self):
@@ -15,16 +14,82 @@ class ZendeskIntegration:
             'subdomain': os.getenv('ZENDESK_SUBDOMAIN')
         }
         self.zenpy_client = Zenpy(**creds)
-        model_id = os.getenv('HF_MODEL_ID')
-        api_token = os.getenv('HF_TOKEN')
-        self.ticket_evaluator = ITTicketEvaluator(model_id=model_id, api_token=api_token)
+        
+        # --- Groq API Client Initialization for Classification ---
+        GROQ_API_KEY = os.getenv('GROQ_API_KEY')
+        self.groq_client = None
+        if GROQ_API_KEY:
+            try:
+                self.groq_client = Groq(api_key=GROQ_API_KEY)
+                print("✅ Groq client initialized successfully.")
+            except Exception as e:
+                print(f"❌ Failed to initialize Groq client: {e}")
+        else:
+            print("⚠️ GROQ_API_KEY not found in environment variables. Classification will not be available.")
+
+    def classify_ticket_description(self, description: str):
+        """
+        Classifies a ticket description using the Groq API.
+        Returns Department and Priority.
+        """
+        if not self.groq_client:
+            return {"Department": "Unknown", "Priority": "Unknown", "error": "Groq client not loaded."}
+
+        try:
+            completion = self.groq_client.chat.completions.create(
+                model="llama3-8b-8192",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Classify the following IT ticket and return output in JSON format with keys: "
+                            "'Department', 'Priority'.\n\n"
+                            f"Ticket: \"{description}\"\n\n"
+                            "departments = [\n"
+                            "    \"IT\",\n"
+                            "    \"Human Resources\",\n"
+                            "    \"Finance\",\n"
+                            "    \"Sales\",\n"
+                            "    \"Marketing\",\n"
+                            "    \"Operations\",\n"
+                            "    \"Customer Service\",\n"
+                            "    \"Legal\",\n"
+                            "    \"Product Development\",\n"
+                            "    \"Facilities\"\n"
+                            "]\n"
+                            "priority = [\"Low\", \"Normal\", \"High\"]\n"
+                            "only json format."
+                        )
+                    },
+                    {
+                        "role": "user",
+                        "content": description
+                    }
+                ],
+                temperature=0,
+                max_tokens=1024,
+                top_p=1,
+                stream=False,
+                response_format={"type": "json_object"},
+            )
+            
+            response_content = completion.choices[0].message.content
+            classification_result = json.loads(response_content)
+            
+            department = classification_result.get("Department", "Unknown")
+            priority = classification_result.get("Priority", "Unknown")
+            
+            return {"Department": department, "Priority": priority}
+
+        except Exception as e:
+            print(f"Error during classification: {e}")
+            return {"Department": "Unknown", "Priority": "Unknown", "error": str(e)}
 
     def search_user(self, email):
-        users = self.zenpy_client.users.search(f"email:{email}")
-        user_list = list(users)
-        if user_list:
+        users = list(self.zenpy_client.users.search(f"email:{email}"))
+        if users:
             print(f"User with email '{email}' found.")
-            return user_list[0]
+            return users[0]
         return None
 
     def create_user(self, email, name, role):
@@ -35,53 +100,37 @@ class ZendeskIntegration:
     def create_ticket_with_classification(self, customer_email, customer_name, assignee_email, assignee_name, ticket_subject, ticket_description):
         """
         Creates a new ticket with automated classification of priority and department.
-
-        Args:
-            customer_email (str): The email of the customer (requester).
-            customer_name (str): The name of the customer.
-            assignee_email (str): The email of the assignee (agent).
-            assignee_name (str): The name of the assignee.
-            ticket_subject (str): The subject of the ticket.
-            ticket_description (str): The description of the ticket.
-
-        Returns:
-            zenpy.lib.api_objects.Ticket or None: The created Ticket object or None if creation failed.
         """
-        # Search for the customer by email
         customer = self.search_user(customer_email)
-        # If the customer is not found, create a new one
         if not customer:
             customer = self.create_user(customer_email, customer_name, 'end-user')
 
-        # Search for the assignee by email
         assignee = self.search_user(assignee_email)
-        # If the assignee is not found, create a new one
         if not assignee:
             assignee = self.create_user(assignee_email, assignee_name, 'agent')
 
-        # Classify the ticket description to determine priority and department
-        classification_result = self.ticket_evaluator.classify_with_custom_classifier([ticket_description])
-        
-        # If classification fails, use default values
-        if not classification_result or 'error' in classification_result[0]:
-            print("Could not classify ticket. Creating ticket with default values.")
-            priority = "normal"
-            department = "IT Support"
+        priority = "normal"
+        department = "IT Support"
+
+        if self.groq_client:
+            print("\nAttempting to classify ticket description...")
+            classification_result = self.classify_ticket_description(ticket_description)
+            
+            if "error" not in classification_result:
+                priority = classification_result.get("Priority", "normal").lower()
+                department = classification_result.get("Department", "IT Support")
+                print(f"Classified Priority: {priority}")
+                print(f"Classified Department: {department}")
+
+                proceed = input("Proceed with this information? (yes/no): ").strip().lower()
+                if proceed != 'yes':
+                    priority = input("Enter priority: ").strip()
+                    department = input("Enter department: ").strip()
+            else:
+                print(f"Classification failed: {classification_result.get('error', 'Unknown error')}")
         else:
-            # Otherwise, use the classified priority and department
-            priority = classification_result[0].get('priority', 'normal')
-            department = classification_result[0].get('department', 'IT Support')
-            # Print the generated information
-            print(f"Generated Priority: {priority}")
-            print(f"Generated Department: {department}")
+            print("Classification model not available. Using default values.")
 
-            # Ask for user confirmation
-            proceed = input("Proceed with this information? (yes/no): ").strip().lower()
-            if proceed != 'yes':
-                priority = input("Enter priority: ").strip()
-                department = input("Enter department: ").strip()
-
-        # If both customer and assignee exist, create the ticket
         if customer and assignee:
             ticket = Ticket(
                 subject=ticket_subject,
@@ -90,50 +139,30 @@ class ZendeskIntegration:
                 assignee_id=assignee.id,
                 priority=priority
             )
-            # Create the ticket in Zendesk
             created_ticket = self.zenpy_client.tickets.create(ticket)
             print(f"Ticket created successfully with ID: {created_ticket.ticket.id}")
             return created_ticket
         else:
-            # If customer or assignee is missing, print an error message
             print("Could not create ticket. Customer or assignee not found or created.")
             return None
 
     def _print_ticket_details(self, ticket):
         """Helper function to print ticket details."""
         print(f"Ticket ID: {ticket.id}, Subject: {ticket.subject}, Status: {ticket.status}")
-        if ticket.assignee_id:
-            try:
-                assignee = self.zenpy_client.users(id=ticket.assignee_id)
-                print(f"  Assignee: {assignee.name}, Email: {assignee.email}")
-            except Exception as e:
-                print(f"  Could not retrieve assignee details for ID {ticket.assignee_id}: {e}")
-
-        if ticket.requester_id:
-            try:
-                requester = self.zenpy_client.users(id=ticket.requester_id)
-                print(f"  Requester: {requester.name}, Email: {requester.email}")
-            except Exception as e:
-                print(f"  Could not retrieve requester details for ID {ticket.requester_id}: {e}")
+        if ticket.assignee:
+            print(f"  Assignee: {ticket.assignee.name}, Email: {ticket.assignee.email}")
+        if ticket.requester:
+            print(f"  Requester: {ticket.requester.name}, Email: {ticket.requester.email}")
         print("-" * 20)
 
     def search_tickets(self, search_query):
         """
         Searches for tickets using a search query and prints the results.
         """
-        if not search_query:
-            print("Search query cannot be empty for a custom search.")
-            return
-
         print(f"\nSearching for tickets with query: '{search_query}'")
         try:
-            tickets = self.zenpy_client.search(search_query, type='ticket')
-            results_found = False
-            for ticket in tickets:
-                results_found = True
+            for ticket in self.zenpy_client.search(search_query, type='ticket'):
                 self._print_ticket_details(ticket)
-            if not results_found:
-                print("No tickets found matching your query.")
         except Exception as e:
             print(f"An error occurred while searching for tickets: {e}")
 
@@ -143,13 +172,8 @@ class ZendeskIntegration:
         """
         print("\nRetrieving all tickets...")
         try:
-            tickets = self.zenpy_client.tickets()
-            results_found = False
-            for ticket in tickets:
-                results_found = True
+            for ticket in self.zenpy_client.tickets():
                 self._print_ticket_details(ticket)
-            if not results_found:
-                print("No tickets found.")
         except Exception as e:
             print(f"An error occurred while retrieving tickets: {e}")
 
@@ -159,13 +183,8 @@ class ZendeskIntegration:
         """
         print("\nRetrieving all customers...")
         try:
-            customers = self.zenpy_client.users(role="end-user")
-            results_found = False
-            for customer in customers:
-                results_found = True
+            for customer in self.zenpy_client.users(role="end-user"):
                 print(f"  Customer: {customer.name}, Email: {customer.email}")
-            if not results_found:
-                print("No customers found.")
         except Exception as e:
             print(f"An error occurred while retrieving customers: {e}")
 
@@ -175,13 +194,8 @@ class ZendeskIntegration:
         """
         print("\nRetrieving all assignees...")
         try:
-            agents = self.zenpy_client.users(role="agent")
-            results_found = False
-            for agent in agents:
-                results_found = True
+            for agent in self.zenpy_client.users(role="agent"):
                 print(f"  Assignee: {agent.name}, Email: {agent.email}")
-            if not results_found:
-                print("No assignees found.")
         except Exception as e:
             print(f"An error occurred while retrieving assignees: {e}")
 
@@ -267,4 +281,3 @@ if __name__ == '__main__':
             break
         else:
             print("Invalid choice. Please enter a number between 1 and 4.")
-

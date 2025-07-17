@@ -76,7 +76,7 @@ safetensors
 langchain-core
 langchain-huggingface
 langsmith
-
+groq
 requests
 requests-toolbelt
 

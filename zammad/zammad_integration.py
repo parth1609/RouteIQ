@@ -2,81 +2,116 @@ import os
 import json
 import requests
 from dotenv import load_dotenv, find_dotenv
-from zammad_py import ZammadAPI 
-from Model.evaluation import ITTicketEvaluator
-from typing import Dict, List
+from zammad_py import ZammadAPI
+from groq import Groq
+from typing import Dict
 
 # Load environment variables from .env file
 load_dotenv()
 
-# --- 1. Zammad API Client Initialization ---
-ZAMMAD_URL = os.getenv('ZAMMAD_URL')
-ZAMMAD_HTTP_TOKEN = os.getenv('ZAMMAD_HTTP_TOKEN')
-ZAMMAD_USERNAME = os.getenv('ZAMMAD_USERNAME')
-ZAMMAD_PASSWORD = os.getenv('ZAMMAD_PASSWORD')
+def initialize_zammad_client():
+    """
+    Initialize and return a Zammad API client with proper error handling.
+    """
+    ZAMMAD_URL = os.getenv('ZAMMAD_URL')
+    if not ZAMMAD_URL:
+        raise ValueError("ZAMMAD_URL environment variable is not set")
 
-client = None
-try:
-    if ZAMMAD_HTTP_TOKEN:
-        client = ZammadAPI(url=ZAMMAD_URL, http_token=ZAMMAD_HTTP_TOKEN, username=ZAMMAD_USERNAME, password=ZAMMAD_PASSWORD)
-    elif ZAMMAD_USERNAME and ZAMMAD_PASSWORD:
-        client = ZammadAPI(url=ZAMMAD_URL, username=ZAMMAD_USERNAME, password=ZAMMAD_PASSWORD)
-    else:
-        raise ValueError("Zammad credentials (HTTP_TOKEN or USERNAME/PASSWORD) not found in environment variables.")
-    
-    # Test connection by getting current user info
-    current_user = client.user.me()
-    print(f"Successfully connected to Zammad as: {current_user.get('email')}")
-    
-    # Verify user has required permissions
-    if not hasattr(client.user, 'me') or not hasattr(client.ticket, 'create'):
-        raise PermissionError("Current user lacks required permissions to create tickets")
+    ZAMMAD_HTTP_TOKEN = os.getenv('ZAMMAD_HTTP_TOKEN')
+    ZAMMAD_USERNAME = os.getenv('ZAMMAD_USERNAME')
+    ZAMMAD_PASSWORD = os.getenv('ZAMMAD_PASSWORD')
 
-except PermissionError as pe:
-    print(f"Permission Error: {pe}")
-    print("Please ensure your account has 'ticket.agent' role in Zammad")
-    exit(1)
-except Exception as e:
-    print(f"Failed to initialize Zammad client: {e}")
-    exit(1)
-
-# --- Hugging Face Model Initialization for Classification ---
-HF_MODEL_ID = os.getenv('HF_MODEL_ID') # Get model ID from environment
-HF_TOKEN = os.getenv('HF_TOKEN')
-ticket_evaluator = None
-if HF_MODEL_ID:
+    client = None
     try:
-        ticket_evaluator = ITTicketEvaluator(model_id=HF_MODEL_ID, api_token=HF_TOKEN)
-        print(f"✅ ITTicketEvaluator initialized successfully with model: {HF_MODEL_ID}")
+        if ZAMMAD_HTTP_TOKEN:
+            client = ZammadAPI(url=ZAMMAD_URL, http_token=ZAMMAD_HTTP_TOKEN)
+        elif ZAMMAD_USERNAME and ZAMMAD_PASSWORD:
+            client = ZammadAPI(url=ZAMMAD_URL, username=ZAMMAD_USERNAME, password=ZAMMAD_PASSWORD)
+        else:
+            raise ValueError("Zammad credentials not found. Set either ZAMMAD_HTTP_TOKEN or both ZAMMAD_USERNAME and ZAMMAD_PASSWORD")
+
+        # Test connection
+        current_user = client.user.me()
+        if not current_user or 'email' not in current_user:
+            raise ValueError("Failed to authenticate with Zammad: Invalid response from server")
+            
+        print(f"Successfully connected to Zammad as: {current_user.get('email')}")
+        return client
+
     except Exception as e:
-        print(f"❌ Failed to initialize ITTicketEvaluator: {e}")
-        ticket_evaluator = None
+        raise RuntimeError(f"Failed to initialize Zammad client: {str(e)}")
+
+# Initialize the client
+try:
+    client = initialize_zammad_client()
+except Exception as e:
+    print(f"Error: {e}")
+    exit(1)
+
+# --- Groq API Client Initialization for Classification ---
+GROQ_API_KEY = os.getenv('GROQ_API_KEY')
+groq_client = None
+if GROQ_API_KEY:
+    try:
+        groq_client = Groq(api_key=GROQ_API_KEY)
+        print(" Groq client initialized successfully.")
+    except Exception as e:
+        print(f"Failed to initialize Groq client: {e}")
 else:
-    print("⚠️ HF_MODEL_ID not found in environment variables. Classification will not be available.")
+    print("GROQ_API_KEY not found in environment variables. Classification will not be available.")
 
 
 def classify_ticket_description(description: str) -> Dict[str, str]:
     """
-    Classifies a ticket description using the ITTicketEvaluator.
+    Classifies a ticket description using the Groq API.
     Returns Department and Priority.
     """
-    if not ticket_evaluator:
-        return {"Department": "Unknown", "Priority": "Unknown", "error": "Ticket evaluator not loaded."}
+    if not groq_client:
+        return {"Department": "Unknown", "Priority": "Unknown", "error": "Groq client not loaded."}
 
     try:
-        # Use the custom classifier method from the evaluator
-        results = ticket_evaluator.classify_with_custom_classifier([description])
-        if not results:
-            raise ValueError("Classification returned no results.")
-
-        # Extract the first result
-        classification_result = results[0]
+        completion = groq_client.chat.completions.create(
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Classify the following IT ticket and return output in JSON format with keys: "
+                        "'Department', 'Priority'.\n\n"
+                        f"Ticket: \"{description}\"\n\n"
+                        "departments = [\n"
+                        "    \"IT\",\n"
+                        "    \"Human Resources\",\n"
+                        "    \"Finance\",\n"
+                        "    \"Sales\",\n"
+                        "    \"Marketing\",\n"
+                        "    \"Operations\",\n"
+                        "    \"Customer Service\",\n"
+                        "    \"Legal\",\n"
+                        "    \"Product Development\",\n"
+                        "    \"Facilities\"\n"
+                        "]\n"
+                        "priority = [\"Low\", \"Normal\", \"High\"]\n"
+                        "only json format."
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": description
+                }
+            ],
+            temperature=0,
+            max_tokens=1024,
+            top_p=1,
+            stream=False,
+            response_format={"type": "json_object"},
+        )
         
-        if "error" in classification_result:
-            raise ValueError(classification_result["error"])
-
-        department = classification_result.get("department", "Unknown")
-        priority = classification_result.get("priority", "Unknown")
+        response_content = completion.choices[0].message.content
+        classification_result = json.loads(response_content)
+        
+        department = classification_result.get("Department", "Unknown")
+        priority = classification_result.get("Priority", "Unknown")
         
         return {"Department": department, "Priority": priority}
 
@@ -87,71 +122,137 @@ def classify_ticket_description(description: str) -> Dict[str, str]:
 def get_all_groups(client_obj) -> Dict[str, int]:
     """
     Retrieves all Zammad groups and returns a dictionary mapping group names to IDs.
+    Falls back gracefully if any error occurs.
     """
-    groups_map = {}
+    groups_map: Dict[str, int] = {}
+    print("\n--- Fetching Zammad Groups (Departments) ---")
     try:
-        all_groups_pagination = client_obj.group.all()
-        all_groups_list = list(all_groups_pagination)
-        if all_groups_list:
-            print("\n--- Available Zammad Groups (Departments) ---")
-            for group in all_groups_list:
-                group_id = group.get('id')
-                group_name = group.get('name')
+        groups = list(client_obj.group.all())  # Most Zammad client versions expect no args
+        if not groups:
+            print("No groups found in your Zammad instance.")
+        else:
+            for group in groups:
+                group_id = group.get("id")
+                group_name = group.get("name")
                 if group_id and group_name:
                     groups_map[group_name] = group_id
                     print(f"  ID: {group_id}, Name: {group_name}")
-            print("---------------------------------------------")
-        else:
-            print("No groups found in your Zammad instance.")
     except Exception as e:
-        print(f"An error occurred while retrieving groups: {e}")
+        print(f"Warning: Unable to fetch groups: {e}")
+    print("---------------------------------------------")
     return groups_map
 
-def find_or_create_customer(client_obj, email: str, firstname: str, lastname: str) -> int:
+def validate_email(email: str) -> bool:
+    """Basic email validation"""
+    import re
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return bool(re.match(pattern, email))
+
+def find_customer_by_email(client_obj, email: str) -> dict:
+    """
+    Search for a customer by email using multiple search methods.
+    Returns the customer data if found, None otherwise.
+    """
+    try:
+        # Try direct search with email
+        search_query = f'email:"{email}"'
+        users = list(client_obj.user.search(search_query))
+        
+        if users:
+            return users[0]
+            
+        # If not found, try a more general search
+        users = list(client_obj.user.search(email))
+        for user in users:
+            if user.get('email', '').lower() == email.lower():
+                return user
+                
+        return None
+        
+    except Exception as e:
+        print(f"Warning: Error searching for customer: {str(e)}")
+        return None
+
+def find_or_create_customer(client_obj, email: str, firstname: str = None, lastname: str = None) -> int:
     """
     Searches for a customer by email. If not found, creates a new customer.
-    Returns the customer ID.
+    Returns the customer ID or None if creation fails.
+    
+    Args:
+        client_obj: Zammad API client instance
+        email: Customer email address
+        firstname: Customer first name (optional)
+        lastname: Customer last name (optional)
+        
+    Returns:
+        int: Customer ID if successful, None otherwise
     """
-    customer_id = None
+    if not email or not isinstance(email, str):
+        print("Error: Email is required and must be a string")
+        return None
+        
+    email = email.strip().lower()
+    if not validate_email(email):
+        print(f"Error: Invalid email format: {email}")
+        return None
+
     try:
-        # --- Part 1: Ensure Customer Exists (Search or Create) ---
-        print(f"Searching for customer: {email}...")
-
-        search_query_string = f'email:"{email}"'
-        existing_users_pagination = client_obj.user.search(search_query_string)
-        existing_customers = list(existing_users_pagination)
-
-        if existing_customers:
-            exact_match_customer = next((user for user in existing_customers if user.get('email') == email), None)
-
-            if exact_match_customer:
-                customer_id = exact_match_customer['id']
-                print(f"Customer '{email}' already exists with ID: {customer_id}")
-            else:
-                print(f"Customer '{email}' not found via exact email match in search results.")
-        else:
-            print(f"No customers found matching '{email}'.")
-
-
-        if customer_id is None:
-            print(f"Customer '{email}' not found. Creating new customer...")
-            new_customer_params = {
-                "email": email,
-                "firstname": firstname,
-                "lastname": lastname,
-                "roles": ["Customer"]
-            }
+        # First try to find existing customer
+        search_query = f'email:"{email}"'
+        users = list(client_obj.user.search(search_query))
+        
+        if users:
+            existing_customer = users[0]
+            customer_id = existing_customer.get('id')
+            if not customer_id:
+                raise ValueError("Invalid response: Missing customer ID")
+                
+            print(f"Customer '{email}' found with ID: {customer_id}")
+            return customer_id
+            
+        # If we get here, customer doesn't exist - create new one
+        print(f"Customer '{email}' not found. Creating new customer...")
+        
+        # Prepare customer data with defaults if needed
+        firstname = (firstname or "").strip() or "Unknown"
+        lastname = (lastname or "").strip() or "User"
+        
+        new_customer_params = {
+            "email": email,
+            "firstname": firstname,
+            "lastname": lastname,
+            "roles": ["Customer"],
+            "active": True,
+            "verified": True
+        }
+        
+        # Try to create the customer
+        try:
             new_customer = client_obj.user.create(params=new_customer_params)
+            if not new_customer or 'id' not in new_customer:
+                raise ValueError("Invalid response when creating customer")
+                
             customer_id = new_customer['id']
             print(f"New customer '{email}' successfully created with ID: {customer_id}")
-        else:
-            print(f"Proceeding with existing customer ID: {customer_id}")
+            return customer_id
+            
+        except Exception as create_error:
+            # If creation fails with email conflict, try to find the customer again
+            error_msg = str(create_error).lower()
+            if "already used" in error_msg or "already exists" in error_msg:
+                print("Customer creation failed - email already in use. Searching again...")
+                existing_customer = find_customer_by_email(client_obj, email)
+                if existing_customer and 'id' in existing_customer:
+                    print(f"Found existing customer with ID: {existing_customer['id']}")
+                    return existing_customer['id']
+            
+            # If we get here, we couldn't find or create the customer
+            print(f"Failed to create customer: {str(create_error)}")
+            return None
 
     except Exception as e:
-        print(f"An error occurred during customer search/creation: {e}")
-        return None # Return None on error
-        
-    return customer_id
+        print(f"Error in find_or_create_customer: {str(e)}")
+        return None
 
 def create_ticket_flow(client_obj, interactive=False):
     """
@@ -165,6 +266,13 @@ def create_ticket_flow(client_obj, interactive=False):
         customer_lastname = input("Enter customer last name: ").strip()
         ticket_title = input("Enter ticket title: ").strip()
         ticket_body = input("Enter ticket description/body: ").strip()
+    else:
+        # Dummy data for non-interactive mode
+        customer_email = "test@example.com"
+        customer_firstname = "Test"
+        customer_lastname = "User"
+        ticket_title = "My computer is slow"
+        ticket_body = "My computer is running very slowly, and I can't open applications."
 
     customer_id = find_or_create_customer(client_obj, customer_email, customer_firstname, customer_lastname)
 
@@ -172,13 +280,11 @@ def create_ticket_flow(client_obj, interactive=False):
         print("Could not determine customer ID. Aborting ticket creation.")
         return
 
-
-
     classified_department = "Unknown"
     classified_priority = "Unknown"
 
     # --- Classification Step ---
-    if ticket_evaluator:
+    if groq_client:
         print("\nAttempting to classify ticket description...")
         classification_result = classify_ticket_description(ticket_body)
         
@@ -191,16 +297,11 @@ def create_ticket_flow(client_obj, interactive=False):
             if interactive:
                 use_classified = input("Use classified Department and Priority? (yes/no): ").strip().lower()
                 if use_classified != 'yes':
-                    classified_department = "Unknown" # Reset if not accepted
+                    classified_department = "Unknown"
                     classified_priority = "Unknown"
                     print("Using manual input for Department and Priority.")
-                else:
-                    print("Using classified Department and Priority.")
-            else:
-                print("Using classified Department and Priority.")
         else:
             print(f"Classification failed: {classification_result.get('error', 'Unknown error')}")
-            print("Proceeding without classification.")
     else:
         print("Classification model not available. Proceeding without classification.")
 
@@ -217,48 +318,54 @@ def create_ticket_flow(client_obj, interactive=False):
                     group_name_input = input("Enter desired group (department) name for the ticket: ").strip()
                     selected_group_id = groups_map.get(group_name_input)
                     if selected_group_id is None:
-                        print("Invalid group name. Please choose from the list above or enter a valid name.")
+                        create_choice = input("Group not found. Would you like to create it? (yes/no): ").strip().lower()
+                        if create_choice in ("yes", "y"):
+                            try:
+                                new_group = client_obj.group.create(params={
+                                    "name": group_name_input,
+                                    "active": True,
+                                    "assignment_timeout": 0
+                                })
+                                selected_group_id = new_group.get("id")
+                                if selected_group_id:
+                                    groups_map[group_name_input] = selected_group_id
+                                    print(f"Created new group '{group_name_input}' with ID: {selected_group_id}")
+                                else:
+                                    print("Failed to retrieve new group ID. Please try again.")
+                            except Exception as e:
+                                print(f"Failed to create group: {e}")
+                        else:
+                            print("Please choose from the existing groups listed above.")
             else:
-                selected_group_id = 1 # Default to group 1 if not found
+                # Default to the first group if not interactive and classification fails
+                selected_group_id = next(iter(groups_map.values()), 1)
     else:
-        print("No groups available. Defaulting to group ID 1 (if it exists).")
-        selected_group_id = 1 # Fallback to default group ID if no groups found
+        print("No groups available. Defaulting to group ID 1.")
+        selected_group_id = 1
 
-    # --- Priority Selection (if not classified or not accepted) ---
-    priority_id = 2 # Default to normal priority
+    # --- Priority Selection ---
+    priority_id = 2  # Default to normal priority
     if classified_priority != "Unknown":
-        # Map classified priority to Zammad priority ID (assuming common mappings)
-        priority_mapping = {
-            "low": 1,
-            "normal": 2,
-            "high": 3,
-        }
-        priority_id = priority_mapping.get(classified_priority.lower(), 2) # Default to normal if not mapped
-    else:
-        if interactive:
-            while True:
-                try:
-                    p_input = input("Enter priority (1: Low, 2: Normal, 3: High) [2]: ").strip()
-                    if not p_input:
-                        priority_id = 2
-                        break
-                    p_id = int(p_input)
-                    if 1 <= p_id <= 3:
-                        priority_id = p_id
-                        break
-                    else:
-                        print("Invalid priority. Please enter a number between 1 and 4.")
-                except ValueError:
-                    print("Invalid input. Please enter a number.")
-        else:
-            priority_id = 2 # Default to normal
+        priority_mapping = {"low": 1, "normal": 2, "high": 3}
+        priority_id = priority_mapping.get(classified_priority.lower(), 2)
+    elif interactive:
+        while True:
+            try:
+                p_input = input("Enter priority (1: Low, 2: Normal, 3: High) [2]: ").strip()
+                if not p_input:
+                    priority_id = 2
+                    break
+                p_id = int(p_input)
+                if 1 <= p_id <= 3:
+                    priority_id = p_id
+                    break
+                else:
+                    print("Invalid priority. Please enter a number between 1 and 3.")
+            except ValueError:
+                print("Invalid input. Please enter a number.")
 
     # --- Create Ticket ---
     try:
-        # Validate required fields before creating ticket
-        if not ticket_title or not selected_group_id or not customer_id:
-            raise ValueError("Missing required fields for ticket creation (title, group_id, or customer_id)")
-            
         ticket_params = {
             "title": ticket_title,
             "group_id": selected_group_id,
@@ -267,48 +374,52 @@ def create_ticket_flow(client_obj, interactive=False):
             "article": {
                 "subject": ticket_title,
                 "body": ticket_body,
-                "type": "email",
+                "type": "note",
                 "internal": False,
-                "to": customer_email
             },
-            "state_id": 1
         }
 
         print("\nAttempting to create a new ticket...")
-        try:
-            ticket = client_obj.ticket.create(params=ticket_params)
-            
-            print(f"Successfully created ticket with ID: {ticket['id']}")
-            print(f"Ticket Number: {ticket['number']}")
-            print(f"Ticket Title: {ticket['title']}")
-            print("\n--- Full JSON of Created Ticket ---")
-            print(json.dumps(ticket, indent=2))
-            print("--- End of Full JSON ---")
-            return ticket
-        except requests.exceptions.HTTPError as http_err:
-            if http_err.response.status_code == 401:
-                print("\n⚠️ Authorization failed. Possible causes:")
-                print("1. Invalid credentials or expired token")
-                print("2. Missing 'ticket.agent' role for your user")
-                print("3. Insufficient permissions for the requested operation")
-                print(f"\nError details: {http_err}")
-            elif http_err.response.status_code == 422:
-                print("\n⚠️ Validation error. Please check your ticket parameters:")
-                print(f"Error details: {http_err.response.json()}")
-            else:
-                print(f"\n⚠️ HTTP Error during ticket creation: {http_err}")
-            return None
-        except Exception as api_error:
-            print(f"\n⚠️ API error during ticket creation: {api_error}")
-            if hasattr(api_error, 'response') and hasattr(api_error.response, 'text'):
-                print(f"Response details: {api_error.response.text}")
-            return None
-    except ValueError as ve:
-        print(f"\n⚠️ Validation Error: {ve}")
-        return None
+        ticket = client_obj.ticket.create(params=ticket_params)
+        
+        print(f"Successfully created ticket with ID: {ticket['id']}")
+        print(f"Ticket Number: {ticket['number']}")
+        print(json.dumps(ticket, indent=2))
+        return ticket
+
+    except requests.exceptions.HTTPError as http_err:
+        print(f"HTTP Error during ticket creation: {http_err}")
+        if http_err.response is not None:
+            body_text = http_err.response.text
+            print(f"Response body: {body_text}")
+            # If not authorized for the selected group, retry with group_id 1
+            if "not authorized" in body_text.lower():
+                try:
+                    print("Retrying ticket creation in default group ID 1 ...")
+                    ticket_params["group_id"] = 1
+                    ticket = client_obj.ticket.create(params=ticket_params)
+                    print(f"Successfully created ticket with ID: {ticket['id']}")
+                    print(f"Ticket Number: {ticket['number']}")
+                    print(json.dumps(ticket, indent=2))
+                    return ticket
+                except Exception as retry_err:
+                    print(f"Retry failed: {retry_err}")
     except Exception as e:
-        print(f"\n⚠️ An unexpected error occurred during ticket creation: {e}")
-        return None
+        err_msg = str(e)
+        if "not authorized" in err_msg.lower():
+            try:
+                print("Error indicates authorization issue. Retrying ticket creation in default group ID 1 ...")
+                ticket_params["group_id"] = 1
+                ticket = client_obj.ticket.create(params=ticket_params)
+                print(f"Successfully created ticket with ID: {ticket['id']}")
+                print(f"Ticket Number: {ticket['number']}")
+                print(json.dumps(ticket, indent=2))
+                return ticket
+            except Exception as retry_err:
+                print(f"Retry failed: {retry_err}")
+        else:
+            print(f"An unexpected error occurred during ticket creation: {e}")
+    return None
 
 def main():
     """
@@ -317,13 +428,9 @@ def main():
     print("🚀 Starting Zammad Integration Script")
     print("=" * 60)
 
-    # Run the interactive ticket creation flow
     create_ticket_flow(client, interactive=True)
 
     print("\n✅ Zammad Integration Script finished!")
 
-
 if __name__ == "__main__":
     main()
-
-
