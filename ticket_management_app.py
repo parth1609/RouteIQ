@@ -226,6 +226,12 @@ def get_all_zendesk_tickets(client, limit=50):
 def update_zammad_ticket(client, ticket_id, update_data):
     """Update a ticket in Zammad"""
     try:
+        # First get the ticket to ensure it exists
+        existing_ticket = client.ticket.find(ticket_id)
+        if not existing_ticket:
+            return None, f"Ticket with ID {ticket_id} not found"
+        
+        # Update the ticket
         result = client.ticket.update(ticket_id, update_data)
         return result, None
     except Exception as e:
@@ -234,9 +240,21 @@ def update_zammad_ticket(client, ticket_id, update_data):
 def update_zendesk_ticket(client, ticket_id, update_data):
     """Update a ticket in Zendesk"""
     try:
-        ticket = client.zenpy_client.tickets(id=ticket_id)
+        from zenpy.lib.api_objects import Ticket
+        
+        # Get the existing ticket
+        existing_ticket = client.zenpy_client.tickets(id=ticket_id)
+        if not existing_ticket:
+            return None, f"Ticket with ID {ticket_id} not found"
+        
+        # Create a new ticket object for update
+        ticket = Ticket(id=ticket_id)
+        
+        # Set the fields to update
         for key, value in update_data.items():
             setattr(ticket, key, value)
+        
+        # Update the ticket
         result = client.zenpy_client.tickets.update(ticket)
         return result, None
     except Exception as e:
@@ -245,31 +263,177 @@ def update_zendesk_ticket(client, ticket_id, update_data):
 def delete_zammad_ticket(client, ticket_id):
     """Delete a ticket in Zammad"""
     try:
-        result = client.ticket.destroy(ticket_id)
-        return result, None
+        # First check if ticket exists
+        existing_ticket = client.ticket.find(ticket_id)
+        if not existing_ticket:
+            return None, f"Ticket with ID {ticket_id} not found"
+        
+        # Zammad doesn't typically allow ticket deletion, but we can try to close it
+        # Use state_id instead of state name (closed state typically has ID 4)
+        try:
+            # Try to get the closed state ID
+            states = client.ticket_state.all()
+            closed_state_id = None
+            for state in states:
+                if hasattr(state, 'name') and state.name.lower() == 'closed':
+                    closed_state_id = state.id
+                    break
+                elif isinstance(state, dict) and state.get('name', '').lower() == 'closed':
+                    closed_state_id = state.get('id')
+                    break
+            
+            if closed_state_id:
+                result = client.ticket.update(ticket_id, {'state_id': closed_state_id})
+            else:
+                # Fallback to state_id 4 (commonly closed)
+                result = client.ticket.update(ticket_id, {'state_id': 4})
+            
+            return result, None
+        except Exception as update_error:
+            # If update fails, try the destroy method
+            try:
+                result = client.ticket.destroy(ticket_id)
+                return result, None
+            except Exception as destroy_error:
+                return None, f"Cannot delete ticket: {str(update_error)}. Also failed to destroy: {str(destroy_error)}"
     except Exception as e:
-        return None, str(e)
+        return None, f"Error accessing ticket: {str(e)}"
 
 def delete_zendesk_ticket(client, ticket_id):
     """Delete a ticket in Zendesk"""
     try:
-        result = client.zenpy_client.tickets.delete(ticket_id)
-        return result, None
+        # Get the ticket first to verify it exists and check its status
+        try:
+            existing_ticket = client.zenpy_client.tickets(id=ticket_id)
+            if not existing_ticket:
+                return None, f"Ticket with ID {ticket_id} not found"
+        except Exception as find_error:
+            return None, f"Ticket with ID {ticket_id} not found: {str(find_error)}"
+        
+        # Check if ticket is already closed
+        if hasattr(existing_ticket, 'status') and existing_ticket.status == 'closed':
+            return existing_ticket, None  # Already closed, consider it "deleted"
+        
+        # Zendesk doesn't allow permanent deletion of tickets
+        # Instead, we'll mark it as deleted (soft delete)
+        from zenpy.lib.api_objects import Ticket, Comment
+        
+        # Try to use Zendesk's delete method first (marks as deleted)
+        try:
+            result = client.zenpy_client.tickets.delete(existing_ticket)
+            return result, None
+        except Exception as delete_error:
+            # If delete doesn't work, try to close the ticket
+            try:
+                # Create a new ticket object for update
+                ticket = Ticket(id=ticket_id)
+                ticket.status = 'closed'
+                ticket.comment = Comment(body='Ticket marked as deleted via RouteIQ management system')
+                
+                result = client.zenpy_client.tickets.update(ticket)
+                return result, None
+            except Exception as close_error:
+                # Last resort - try just changing status to solved first, then closed
+                try:
+                    # First set to solved
+                    ticket_solved = Ticket(id=ticket_id, status='solved')
+                    client.zenpy_client.tickets.update(ticket_solved)
+                    
+                    # Then set to closed
+                    ticket_closed = Ticket(id=ticket_id, status='closed')
+                    result = client.zenpy_client.tickets.update(ticket_closed)
+                    return result, None
+                except Exception as final_error:
+                    return None, f"Cannot delete/close ticket. Delete failed: {str(delete_error)}. Close failed: {str(close_error)}. Final attempt failed: {str(final_error)}"
     except Exception as e:
-        return None, str(e)
+        return None, f"Error processing ticket deletion: {str(e)}"
 
-def format_ticket_for_display(ticket, system):
+def resolve_zammad_ids(client, ticket):
+    """Resolve Zammad ticket IDs to actual names"""
+    resolved_data = {}
+    
+    try:
+        # Resolve state
+        if 'state_id' in ticket and ticket['state_id']:
+            try:
+                state = client.ticket_state.find(ticket['state_id'])
+                resolved_data['state'] = state.get('name', f"State ID: {ticket['state_id']}")
+            except:
+                resolved_data['state'] = f"State ID: {ticket['state_id']}"
+        
+        # Resolve priority
+        if 'priority_id' in ticket and ticket['priority_id']:
+            try:
+                priority = client.ticket_priority.find(ticket['priority_id'])
+                resolved_data['priority'] = priority.get('name', f"Priority ID: {ticket['priority_id']}")
+            except:
+                resolved_data['priority'] = f"Priority ID: {ticket['priority_id']}"
+        
+        # Resolve customer
+        if 'customer_id' in ticket and ticket['customer_id']:
+            try:
+                customer = client.user.find(ticket['customer_id'])
+                if customer:
+                    name_parts = []
+                    if customer.get('firstname'):
+                        name_parts.append(customer['firstname'])
+                    if customer.get('lastname'):
+                        name_parts.append(customer['lastname'])
+                    if customer.get('email'):
+                        name_parts.append(f"({customer['email']})")
+                    resolved_data['customer'] = ' '.join(name_parts) if name_parts else f"Customer ID: {ticket['customer_id']}"
+                else:
+                    resolved_data['customer'] = f"Customer ID: {ticket['customer_id']}"
+            except:
+                resolved_data['customer'] = f"Customer ID: {ticket['customer_id']}"
+        
+        # Resolve group
+        if 'group_id' in ticket and ticket['group_id']:
+            try:
+                group = client.group.find(ticket['group_id'])
+                resolved_data['group'] = group.get('name', f"Group ID: {ticket['group_id']}")
+            except:
+                resolved_data['group'] = f"Group ID: {ticket['group_id']}"
+                
+    except Exception as e:
+        # If there's any error, just return empty dict and fall back to IDs
+        pass
+    
+    return resolved_data
+
+def format_ticket_for_display(ticket, system, client=None):
     """Format ticket data for display in Streamlit"""
     if system == "Zammad":
+        def safe_get(obj, key, default='N/A'):
+            if isinstance(obj, dict):
+                value = obj.get(key, default)
+                return str(value) if value is not None and value != default else default
+            elif hasattr(obj, key):
+                value = getattr(obj, key, default)
+                return str(value) if value is not None and value != default else default
+            else:
+                return default
+        
+        # Try to resolve IDs to names if client is provided
+        resolved_data = {}
+        if client:
+            resolved_data = resolve_zammad_ids(client, ticket)
+        
+        # Use resolved data or fall back to IDs
+        state_value = resolved_data.get('state', f"State ID: {safe_get(ticket, 'state_id')}")
+        priority_value = resolved_data.get('priority', f"Priority ID: {safe_get(ticket, 'priority_id')}")
+        customer_value = resolved_data.get('customer', f"Customer ID: {safe_get(ticket, 'customer_id')}")
+        group_value = resolved_data.get('group', f"Group ID: {safe_get(ticket, 'group_id')}")
+        
         return {
-            "ID": ticket.get('id', 'N/A'),
-            "Title": ticket.get('title', 'N/A'),
-            "State": ticket.get('state', 'N/A'),
-            "Priority": ticket.get('priority', 'N/A'),
-            "Customer": ticket.get('customer', 'N/A'),
-            "Group": ticket.get('group', 'N/A'),
-            "Created": ticket.get('created_at', 'N/A'),
-            "Updated": ticket.get('updated_at', 'N/A')
+            "ID": safe_get(ticket, 'id'),
+            "Title": safe_get(ticket, 'title'),
+            "State": state_value,
+            "Priority": priority_value,
+            "Customer": customer_value,
+            "Group": group_value,
+            "Created": safe_get(ticket, 'created_at'),
+            "Updated": safe_get(ticket, 'updated_at')
         }
     else:  # Zendesk
         return {
@@ -496,7 +660,7 @@ def main():
             # Convert tickets to display format
             display_data = []
             for ticket in st.session_state.search_results:
-                display_data.append(format_ticket_for_display(ticket, system))
+                display_data.append(format_ticket_for_display(ticket, system, client))
             
             if display_data:
                 import pandas as pd
@@ -514,6 +678,12 @@ def main():
         st.subheader("📋 Ticket Management")
         col1, col2, col3 = st.columns(3)
         
+        # Initialize session state for UI management
+        if 'show_update_form' not in st.session_state:
+            st.session_state.show_update_form = False
+        if 'show_delete_form' not in st.session_state:
+            st.session_state.show_delete_form = False
+        
         with col1:
             if st.button("📊 View All Tickets", type="secondary"):
                 with st.spinner(f"Fetching all {system} tickets..."):
@@ -530,10 +700,14 @@ def main():
                         st.info("📝 No tickets found")
         
         with col2:
-            update_clicked = st.button("✏️ Update Ticket", type="secondary")
+            if st.button("✏️ Update Ticket", type="secondary"):
+                st.session_state.show_update_form = not st.session_state.show_update_form
+                st.session_state.show_delete_form = False  # Hide delete form
         
         with col3:
-            delete_clicked = st.button("🗑️ Delete Ticket", type="secondary")
+            if st.button("🗑️ Delete Ticket", type="secondary"):
+                st.session_state.show_delete_form = not st.session_state.show_delete_form
+                st.session_state.show_update_form = False  # Hide update form
         
         # Display all tickets
         if st.session_state.all_tickets:
@@ -542,7 +716,7 @@ def main():
             # Convert tickets to display format
             display_data = []
             for ticket in st.session_state.all_tickets:
-                display_data.append(format_ticket_for_display(ticket, system))
+                display_data.append(format_ticket_for_display(ticket, system, client))
             
             if display_data:
                 import pandas as pd
@@ -555,22 +729,31 @@ def main():
                     st.rerun()
         
         # Update ticket functionality
-        if update_clicked:
+        if st.session_state.show_update_form:
+            st.divider()
             st.subheader("✏️ Update Ticket")
             
             with st.form("update_ticket_form"):
-                ticket_id = st.number_input("Ticket ID", min_value=1, step=1)
+                ticket_id = st.number_input("Ticket ID", min_value=1, step=1, key="update_ticket_id")
                 
                 if system == "Zammad":
-                    update_title = st.text_input("New Title (optional)")
-                    update_state = st.selectbox("New State (optional)", ["", "new", "open", "pending reminder", "pending close", "closed"])
-                    update_priority = st.selectbox("New Priority (optional)", ["", "1 low", "2 normal", "3 high"])
+                    update_title = st.text_input("New Title (optional)", key="update_title")
+                    update_state = st.selectbox("New State (optional)", ["", "new", "open", "pending reminder", "pending close", "closed"], key="update_state")
+                    update_priority = st.selectbox("New Priority (optional)", ["", "1 low", "2 normal", "3 high"], key="update_priority")
                 else:  # Zendesk
-                    update_subject = st.text_input("New Subject (optional)")
-                    update_status = st.selectbox("New Status (optional)", ["", "new", "open", "pending", "hold", "solved", "closed"])
-                    update_priority = st.selectbox("New Priority (optional)", ["", "low", "normal", "high", "urgent"])
+                    update_subject = st.text_input("New Subject (optional)", key="update_subject")
+                    update_status = st.selectbox("New Status (optional)", ["", "new", "open", "pending", "hold", "solved", "closed"], key="update_status")
+                    update_priority = st.selectbox("New Priority (optional)", ["", "low", "normal", "high", "urgent"], key="update_priority_zd")
                 
-                update_submitted = st.form_submit_button("🔄 Update Ticket")
+                col1, col2 = st.columns([1, 1])
+                with col1:
+                    update_submitted = st.form_submit_button("🔄 Update Ticket", type="primary")
+                with col2:
+                    cancel_update = st.form_submit_button("❌ Cancel")
+                
+                if cancel_update:
+                    st.session_state.show_update_form = False
+                    st.rerun()
                 
                 if update_submitted:
                     if ticket_id:
@@ -603,23 +786,42 @@ def main():
                                     st.error(f"❌ Failed to update ticket: {error}")
                                 else:
                                     st.success(f"✅ Ticket {ticket_id} updated successfully!")
-                                    st.json(result if isinstance(result, dict) else str(result))
+                                    if isinstance(result, dict):
+                                        st.json(result)
+                                    else:
+                                        st.write(f"Result: {str(result)}")
+                                    # Hide form after successful update
+                                    st.session_state.show_update_form = False
                         else:
                             st.warning("Please provide at least one field to update")
                     else:
                         st.warning("Please enter a valid ticket ID")
         
         # Delete ticket functionality
-        if delete_clicked:
+        if st.session_state.show_delete_form:
+            st.divider()
             st.subheader("🗑️ Delete Ticket")
             
             st.warning("⚠️ **Warning:** This action cannot be undone!")
             
+            if system == "Zammad":
+                st.info("📝 **Note:** Zammad tickets will be closed instead of permanently deleted.")
+            elif system == "Zendesk":
+                st.info("📝 **Note:** Zendesk tickets will be closed and marked as deleted (soft delete).")
+            
             with st.form("delete_ticket_form"):
-                delete_ticket_id = st.number_input("Ticket ID to Delete", min_value=1, step=1)
-                confirm_delete = st.checkbox("I confirm that I want to delete this ticket")
+                delete_ticket_id = st.number_input("Ticket ID to Delete", min_value=1, step=1, key="delete_ticket_id")
+                confirm_delete = st.checkbox("I confirm that I want to delete this ticket", key="confirm_delete")
                 
-                delete_submitted = st.form_submit_button("🗑️ Delete Ticket", type="primary")
+                col1, col2 = st.columns([1, 1])
+                with col1:
+                    delete_submitted = st.form_submit_button("🗑️ Delete Ticket", type="primary")
+                with col2:
+                    cancel_delete = st.form_submit_button("❌ Cancel")
+                
+                if cancel_delete:
+                    st.session_state.show_delete_form = False
+                    st.rerun()
                 
                 if delete_submitted:
                     if delete_ticket_id and confirm_delete:
@@ -638,6 +840,8 @@ def main():
                                     st.session_state.search_results = []
                                 if 'all_tickets' in st.session_state:
                                     st.session_state.all_tickets = []
+                                # Hide form after successful deletion
+                                st.session_state.show_delete_form = False
                     elif not confirm_delete:
                         st.warning("Please confirm that you want to delete the ticket")
                     else:
