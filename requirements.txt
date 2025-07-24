@@ -1,60 +1,13 @@
-
-# scikit-learn==1.7.0
-# torch==2.7.1+cu118
-# torchaudio==2.7.1+cu118
-# torchvision==0.22.1+cu118
-# tensorflow==2.19.0
-# keras==3.10.0
-# tf_keras==2.19.0 # Use either keras or tf_keras depending on your setup
-# tensorboard==2.19.0
-
-# # Hugging Face Ecosystem
-# transformers==4.52.4
-# datasets==3.6.0
-# evaluate==0.4.3
-# huggingface-hub==0.33.0
-# peft==0.15.2
-# trl==0.18.2
-# tokenizers==0.21.1
-# safetensors==0.5.3
-
-# langchain-core==0.3.65
-# langchain-huggingface==0.3.0
-# langsmith==0.3.45
-
-# # HTTP Requests
-# requests==2.32.4
-# requests-toolbelt==1.0.0 # If you explicitly use features from requests-toolbelt
-
-# # zammad API Clients
-# zammad_py==3.2.0
-
-# # Zendesk API Clients
-# # zdesk==2.8.1
-# # Zendesk==1.1.1
-# zenpy==2.0.56
-
-
-# # Utilities & Other Common Direct Dependencies
-# tqdm==4.67.1
-# matplotlib==3.10.3
-# pillow==11.2.1
-# python-dotenv==1.1.1 # If you're using .env files for configuration
-# MarkupSafe==3.0.2 # Often a dependency, but good to include if Jinja2 is direct
-# Jinja2==3.1.6
-# protobuf==5.29.5
-# pytz==2025.2 # If you handle timezones explicitly
-# regex==2024.11.6
-# PyYAML==6.0.2 # If you read/write YAML files
-# orjson==3.10.18 # For faster JSON operations, if explicitly used
-# uv==0.7.13 # If you use uv as your package manager/resolver
+# requirements.txt
 
 
 pandas
-numpy==1.26.4
+numpy 
 scipy
 scikit-learn
 torch
+spacy
+nltk
 torchaudio
 torchvision
 tensorflow
@@ -70,6 +23,7 @@ peft
 trl
 tokenizers
 safetensors
+sentence-transformers==5.0.0
 
 langchain-core
 langchain-huggingface
