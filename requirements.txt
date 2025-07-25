@@ -5,6 +5,7 @@ pandas
 numpy==1.23.5
 seaborn
 matplotlib
+plotly
 scipy
 scikit-learn
 torch
