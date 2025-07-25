@@ -2,7 +2,9 @@
 
 
 pandas
-numpy 
+numpy==1.23.5
+seaborn
+matplotlib
 scipy
 scikit-learn
 torch
@@ -10,7 +12,7 @@ spacy
 nltk
 torchaudio
 torchvision
-tensorflow
+# tensorflow
 keras
 tf_keras
 tensorboard
