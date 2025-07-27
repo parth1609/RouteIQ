@@ -31,12 +31,14 @@ sentence-transformers==5.0.0
 langchain-core
 langchain-huggingface
 langsmith
-
+groq
 requests
 requests-toolbelt
 
 zammad_py
 zenpy
+
+streamlit>=1.28.0
 
 tqdm
 matplotlib
