@@ -13,7 +13,7 @@ spacy
 nltk
 torchaudio
 torchvision
-# tensorflow
+# tensorflowf
 keras
 tf_keras
 tensorboard
