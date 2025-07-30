@@ -7,18 +7,18 @@ from nltk.stem import WordNetLemmatizer
 # --- 1. Download NLTK Data (run once if not already done) ---
 # This ensures that necessary NLTK data (stopwords, wordnet) is available.
 # It's crucial that the preprocessing steps are identical to those used during training.
-# try:
-#     nltk.data.find('corpora/stopwords')
-# except nltk.downloader.DownloadError:
-#     nltk.download('stopwords')
-# try:
-#     nltk.data.find('corpora/wordnet')
-# except nltk.downloader.DownloadError:
-#     nltk.download('wordnet')
-# try:
-#     nltk.data.find('corpora/omw-1.4') # Required for WordNetLemmatizer
-# except nltk.downloader.DownloadError:
-#     nltk.download('omw-1.4')
+try:
+    nltk.data.find('corpora/stopwords')
+except LookupError:
+    nltk.download('stopwords')
+try:
+    nltk.data.find('corpora/wordnet')
+except LookupError:
+    nltk.download('wordnet')
+try:
+    nltk.data.find('corpora/omw-1.4') # Required for WordNetLemmatizer
+except LookupError:
+    nltk.download('omw-1.4')
 
 
 # --- 2. Define Preprocessing Function (MUST be identical to training) ---
@@ -111,18 +111,3 @@ def predict_ticket_category_loaded(description: str) -> tuple[str, str]:
 
     return predicted_department, predicted_priority
 
-
-# --- 6. Example Usage ---
-if __name__ == '__main__':
-    print("\n--- Making Predictions with Loaded Models ---")
-
-    test_ticket_1 = """I am writing to report persistent and highly disruptive issues with my company email (Outlook 365) and calendar synchronization. This problem began immediately after the system-wide software update that was pushed out last Tuesday.
-
-Specifically, my Outlook email client on my desktop (Windows 10, Dell Latitude 7420) is failing to sync new emails in real-time. There's a significant delay, often up to 15-20 minutes, before new messages appear in my inbox. I've tried restarting Outlook, restarting my laptop, and even checking my internet connection (which is stable and fast). The issue persists whether I'm connected via Wi-Fi or Ethernet.
-
-Furthermore, my Outlook calendar is not syncing correctly with my mobile device (iPhone 13, iOS 17.5.1). Meetings I accept or create on my desktop do not show up on my phone, and vice-versa. This is causing me to miss important appointments and double-book myself, leading to significant professional embarrassment and impacting project deadlines. I've already tried re-adding my email account on my iPhone, but the problem remains. I also noticed that shared calendars are particularly affected; updates from my team members' calendars are not reflecting on my end.
-
-I rely heavily on real-time email communication and an accurate calendar for my role in project management. This ongoing issue is severely hindering my productivity and ability to collaborate effectively. Could you please investigate this matter as soon as possible? I am available for a remote session or a desk visit at your earliest convenience"""
-    dept1, prio1 = predict_ticket_category_loaded(test_ticket_1)
-    print(f"Ticket: '{test_ticket_1}'")
-    print(f"Predicted Department: {dept1}, Predicted Priority: {prio1}\n")
