@@ -2,12 +2,12 @@ from pydantic_settings import BaseSettings
 from pathlib import Path
 
 class Settings(BaseSettings):
-    # Model paths
-    TFIDF_VECTORIZER_PATH: str = str(Path(__file__).parent / "models" / "tfidf_vectorizer.pkl")
-    LE_DEPARTMENT_PATH: str = str(Path(__file__).parent / "models" / "le_department.pkl")
-    LE_PRIORITY_PATH: str = str(Path(__file__).parent / "models" / "le_priority.pkl")
-    LOG_REG_DEPT_PATH: str = str(Path(__file__).parent / "models" / "log_reg_dept_model.pkl")
-    LOG_REG_PRIO_PATH: str = str(Path(__file__).parent / "models" / "log_reg_prio_model.pkl")
+    # Model paths - pointing to the models directory in the parent folder
+    TFIDF_VECTORIZER_PATH: str = str(Path(__file__).parent.parent / "models" / "tfidf_vectorizer.pkl")
+    LE_DEPARTMENT_PATH: str = str(Path(__file__).parent.parent / "models" / "le_department.pkl")
+    LE_PRIORITY_PATH: str = str(Path(__file__).parent.parent / "models" / "le_priority.pkl")
+    LOG_REG_DEPT_PATH: str = str(Path(__file__).parent.parent / "models" / "log_reg_dept_model.pkl")
+    LOG_REG_PRIO_PATH: str = str(Path(__file__).parent.parent / "models" / "log_reg_prio_model.pkl")
     
     # API settings
     API_TITLE: str = "Ticket Classification API"

@@ -210,10 +210,7 @@ __marimo__/
 #file
 note.txt
 Model/gpt2-it-ticket-classifier
-<<<<<<< HEAD
-
 # embedding files
 *.npy
-=======
+
 gemini.md
->>>>>>> version_1
