@@ -3,7 +3,6 @@ import json
 import requests
 from dotenv import load_dotenv, find_dotenv
 from zammad_py import ZammadAPI
-from groq import Groq
 from typing import Dict
 
 # Load environment variables from .env file
@@ -48,76 +47,8 @@ except Exception as e:
     print(f"Error: {e}")
     exit(1)
 
-# --- Groq API Client Initialization for Classification ---
-GROQ_API_KEY = os.getenv('GROQ_API_KEY')
-groq_client = None
-if GROQ_API_KEY:
-    try:
-        groq_client = Groq(api_key=GROQ_API_KEY)
-        print(" Groq client initialized successfully.")
-    except Exception as e:
-        print(f"Failed to initialize Groq client: {e}")
-else:
-    print("GROQ_API_KEY not found in environment variables. Classification will not be available.")
 
 
-def classify_ticket_description(description: str) -> Dict[str, str]:
-    """
-    Classifies a ticket description using the Groq API.
-    Returns Department and Priority.
-    """
-    if not groq_client:
-        return {"Department": "Unknown", "Priority": "Unknown", "error": "Groq client not loaded."}
-
-    try:
-        completion = groq_client.chat.completions.create(
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "Classify the following IT ticket and return output in JSON format with keys: "
-                        "'Department', 'Priority'.\n\n"
-                        f"Ticket: \"{description}\"\n\n"
-                        "departments = [\n"
-                        "    \"IT\",\n"
-                        "    \"Human Resources\",\n"
-                        "    \"Finance\",\n"
-                        "    \"Sales\",\n"
-                        "    \"Marketing\",\n"
-                        "    \"Operations\",\n"
-                        "    \"Customer Service\",\n"
-                        "    \"Legal\",\n"
-                        "    \"Product Development\",\n"
-                        "    \"Facilities\"\n"
-                        "]\n"
-                        "priority = [\"Low\", \"Normal\", \"High\"]\n"
-                        "only json format."
-                    )
-                },
-                {
-                    "role": "user",
-                    "content": description
-                }
-            ],
-            temperature=0,
-            max_tokens=1024,
-            top_p=1,
-            stream=False,
-            response_format={"type": "json_object"},
-        )
-        
-        response_content = completion.choices[0].message.content
-        classification_result = json.loads(response_content)
-        
-        department = classification_result.get("Department", "Unknown")
-        priority = classification_result.get("Priority", "Unknown")
-        
-        return {"Department": department, "Priority": priority}
-
-    except Exception as e:
-        print(f"Error during classification: {e}")
-        return {"Department": "Unknown", "Priority": "Unknown", "error": str(e)}
 
 def get_all_groups(client_obj) -> Dict[str, int]:
     """
@@ -280,30 +211,12 @@ def create_ticket_flow(client_obj, interactive=False):
         print("Could not determine customer ID. Aborting ticket creation.")
         return
 
+    # Default values for department and priority
     classified_department = "Unknown"
     classified_priority = "Unknown"
+    
+    print("\nProceeding without automatic classification.")
 
-    # --- Classification Step ---
-    if groq_client:
-        print("\nAttempting to classify ticket description...")
-        classification_result = classify_ticket_description(ticket_body)
-        
-        if "error" not in classification_result:
-            classified_department = classification_result.get("Department", "Unknown")
-            classified_priority = classification_result.get("Priority", "Unknown")
-            print(f"Classified Department: {classified_department}")
-            print(f"Classified Priority: {classified_priority}")
-            
-            if interactive:
-                use_classified = input("Use classified Department and Priority? (yes/no): ").strip().lower()
-                if use_classified != 'yes':
-                    classified_department = "Unknown"
-                    classified_priority = "Unknown"
-                    print("Using manual input for Department and Priority.")
-        else:
-            print(f"Classification failed: {classification_result.get('error', 'Unknown error')}")
-    else:
-        print("Classification model not available. Proceeding without classification.")
 
     # --- Group Selection ---
     groups_map = get_all_groups(client_obj)
