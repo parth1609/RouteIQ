@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import Optional
 
-from ...config import settings
+from app.config import settings
 from ..models.schemas import (
     HealthResponse,
     TicketRequest,
