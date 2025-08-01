@@ -144,7 +144,12 @@ def create_zammad_ticket(client, ticket_data):
         
         # Add priority if classified
         if classification and 'Priority' in classification:
-            priority_map = {'Low': 1, 'Normal': 2, 'High': 3}
+            # Handle both lowercase and capitalized priority values
+            priority_map = {
+                'low': 1, 'Low': 1,
+                'normal': 2, 'Normal': 2, 'medium': 2, 'Medium': 2,
+                'high': 3, 'High': 3
+            }
             ticket_payload['priority_id'] = priority_map.get(classification['Priority'], 2)
         
         # Create the ticket
