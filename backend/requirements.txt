@@ -31,7 +31,6 @@ sentence-transformers==5.0.0
 langchain-core
 langchain-huggingface
 langsmith
-groq
 requests
 requests-toolbelt
 
