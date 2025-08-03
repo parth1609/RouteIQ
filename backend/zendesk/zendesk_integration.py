@@ -1,89 +1,140 @@
 import os
 import json
+import requests
 from dotenv import load_dotenv
 from zenpy import Zenpy
 from zenpy.lib.api_objects import Ticket, User
-from groq import Groq
 
 class ZendeskIntegration:
     def __init__(self):
         load_dotenv()
-        creds = {
-            'email': os.getenv('ZENDESK_EMAIL'),
-            'token': os.getenv('ZENDESK_TOKEN'),
-            'subdomain': os.getenv('ZENDESK_SUBDOMAIN')
-        }
-        self.zenpy_client = Zenpy(**creds)
         
-        # --- Groq API Client Initialization for Classification ---
-        GROQ_API_KEY = os.getenv('GROQ_API_KEY')
-        self.groq_client = None
-        if GROQ_API_KEY:
-            try:
-                self.groq_client = Groq(api_key=GROQ_API_KEY)
-                print("✅ Groq client initialized successfully.")
-            except Exception as e:
-                print(f"❌ Failed to initialize Groq client: {e}")
-        else:
-            print("⚠️ GROQ_API_KEY not found in environment variables. Classification will not be available.")
+        # Load and validate Zendesk credentials
+        self.zendesk_email = os.getenv('ZENDESK_EMAIL')
+        self.zendesk_token = os.getenv('ZENDESK_TOKEN')
+        self.zendesk_subdomain = os.getenv('ZENDESK_SUBDOMAIN')
+        
+        # Validate that all required credentials are present
+        missing_creds = []
+        if not self.zendesk_email:
+            missing_creds.append('ZENDESK_EMAIL')
+        if not self.zendesk_token:
+            missing_creds.append('ZENDESK_TOKEN')
+        if not self.zendesk_subdomain:
+            missing_creds.append('ZENDESK_SUBDOMAIN')
+            
+        if missing_creds:
+            raise ValueError(f"Missing required Zendesk credentials: {', '.join(missing_creds)}. Please check your .env file.")
+        
+        # Print credential status (without exposing sensitive data)
+        print(f"✅ Zendesk credentials loaded:")
+        print(f"   Email: {self.zendesk_email}")
+        print(f"   Subdomain: {self.zendesk_subdomain}")
+        print(f"   Token: {'*' * (len(self.zendesk_token) - 4) + self.zendesk_token[-4:] if len(self.zendesk_token) > 4 else '***'}")
+        
+        creds = {
+            'email': self.zendesk_email,
+            'token': self.zendesk_token,
+            'subdomain': self.zendesk_subdomain
+        }
+        
+        try:
+            self.zenpy_client = Zenpy(**creds)
+            print("✅ Zendesk client initialized successfully")
+        except Exception as e:
+            print(f"❌ Failed to initialize Zendesk client: {e}")
+            raise e
+        
+        # --- FastAPI Ticket Classifier Service URL ---
+        self.API_URL = "http://127.0.0.1:8000/api/v1/"
+        self.PREDICT_URL = f"{self.API_URL}predict"
+        self.HEALTH_URL = f"{self.API_URL}health"
+        
+        # Note: This implementation uses the local FastAPI ticket classifier service
+        # instead of the GROQ API for ticket classification
 
     def classify_ticket_description(self, description: str):
         """
-        Classifies a ticket description using the Groq API.
+        Classifies a ticket description using the FastAPI classifier service.
         Returns Department and Priority.
         """
-        if not self.groq_client:
-            return {"Department": "Unknown", "Priority": "Unknown", "error": "Groq client not loaded."}
-
         try:
-            completion = self.groq_client.chat.completions.create(
-                model="llama3-8b-8192",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Classify the following IT ticket and return output in JSON format with keys: "
-                            "'Department', 'Priority'.\n\n"
-                            f"Ticket: \"{description}\"\n\n"
-                            "departments = [\n"
-                            "    \"IT\",\n"
-                            "    \"Human Resources\",\n"
-                            "    \"Finance\",\n"
-                            "    \"Sales\",\n"
-                            "    \"Marketing\",\n"
-                            "    \"Operations\",\n"
-                            "    \"Customer Service\",\n"
-                            "    \"Legal\",\n"
-                            "    \"Product Development\",\n"
-                            "    \"Facilities\"\n"
-                            "]\n"
-                            "priority = [\"Low\", \"Normal\", \"High\"]\n"
-                            "only json format."
-                        )
-                    },
-                    {
-                        "role": "user",
-                        "content": description
-                    }
-                ],
-                temperature=0,
-                max_tokens=1024,
-                top_p=1,
-                stream=False,
-                response_format={"type": "json_object"},
-            )
+            payload = {"description": description}
+            response = requests.post(self.PREDICT_URL, json=payload)
+            response.raise_for_status()
             
-            response_content = completion.choices[0].message.content
-            classification_result = json.loads(response_content)
-            
-            department = classification_result.get("Department", "Unknown")
-            priority = classification_result.get("Priority", "Unknown")
+            classification_result = response.json()
+            department = classification_result.get("department", "Unknown")
+            priority = classification_result.get("priority", "Unknown")
             
             return {"Department": department, "Priority": priority}
 
+        except requests.exceptions.RequestException as e:
+            print(f"Error during classification: {e}")
+            return {"Department": "Unknown", "Priority": "Unknown", "error": f"Failed to connect to classifier API: {str(e)}"}
         except Exception as e:
             print(f"Error during classification: {e}")
             return {"Department": "Unknown", "Priority": "Unknown", "error": str(e)}
+
+    def test_authentication(self):
+        """
+        Test Zendesk authentication by making a simple API call.
+        Returns True if authentication is successful, False otherwise.
+        """
+        try:
+            # Try to get current user info to test authentication
+            current_user = self.zenpy_client.users.me()
+            
+            # Check if we're getting anonymous user (indicates auth issue)
+            if current_user.name == "Anonymous user" or current_user.email == "invalid@example.com":
+                print("⚠️  Warning: Connected as anonymous user. This indicates an authentication issue.")
+                print("   Possible causes:")
+                print("   1. Invalid API token")
+                print("   2. Token doesn't have sufficient permissions")
+                print("   3. Email doesn't match the token owner")
+                print("   4. Account is suspended or inactive")
+                return False
+            
+            print(f"✅ Authentication successful! Connected as: {current_user.name} ({current_user.email})")
+            return True
+        except Exception as e:
+            print(f"❌ Authentication failed: {e}")
+            print("\n🔍 Troubleshooting tips:")
+            print("1. Check if your .env file contains the correct Zendesk credentials:")
+            print("   ZENDESK_EMAIL=your-email@domain.com")
+            print("   ZENDESK_TOKEN=your-api-token")
+            print("   ZENDESK_SUBDOMAIN=your-subdomain")
+            print("2. Verify your API token is valid and has the necessary permissions")
+            print("3. Ensure your subdomain is correct (e.g., 'company' for company.zendesk.com)")
+            print("4. Check if your Zendesk account is active and not suspended")
+            return False
+
+    def _serialize_ticket_response(self, ticket_response):
+        """
+        Safely serialize Zendesk ticket response to avoid JSON parsing errors.
+        """
+        try:
+            if hasattr(ticket_response, 'ticket'):
+                ticket = ticket_response.ticket
+                return {
+                    "success": True,
+                    "ticket_id": getattr(ticket, 'id', None),
+                    "ticket_subject": getattr(ticket, 'subject', None),
+                    "ticket_status": getattr(ticket, 'status', None),
+                    "ticket_priority": getattr(ticket, 'priority', None),
+                    "message": "Ticket created successfully!"
+                }
+            else:
+                return {
+                    "success": True,
+                    "ticket_data": str(ticket_response),
+                    "message": "Ticket created successfully!"
+                }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to serialize ticket response: {str(e)}"
+            }
 
     def search_user(self, email):
         users = list(self.zenpy_client.users.search(f"email:{email}"))
@@ -131,26 +182,24 @@ class ZendeskIntegration:
         priority = "normal"
         department = "IT Support"
 
-        if self.groq_client:
-            print("\nAttempting to classify ticket description...")
-            classification_result = self.classify_ticket_description(ticket_description)
+        print("\nAttempting to classify ticket description...")
+        classification_result = self.classify_ticket_description(ticket_description)
+        
+        if "error" not in classification_result:
+            priority = classification_result.get("Priority", "normal").lower()
+            department = classification_result.get("Department", "IT Support")
+            print(f"Classified Priority: {priority}")
+            print(f"Classified Department: {department}")
             
-            if "error" not in classification_result:
-                priority = classification_result.get("Priority", "normal").lower()
-                department = classification_result.get("Department", "IT Support")
-                print(f"Classified Priority: {priority}")
-                print(f"Classified Department: {department}")
-                
-                # Auto-proceed with classification in web application context
-                if auto_proceed:
-                    print("Auto-proceeding with AI classification...")
-                else:
-                    # This would only be used in command-line context
-                    print("Using AI classification results")
+            # Auto-proceed with classification in web application context
+            if auto_proceed:
+                print("Auto-proceeding with AI classification...")
             else:
-                print(f"Classification failed: {classification_result.get('error', 'Unknown error')}")
+                # This would only be used in command-line context
+                print("Using AI classification results")
         else:
-            print("Classification model not available. Using default values.")
+            print(f"Classification failed: {classification_result.get('error', 'Unknown error')}")
+            print("Using default values.")
 
         if customer:
             ticket = Ticket(
@@ -162,10 +211,27 @@ class ZendeskIntegration:
             )
             created_ticket = self.zenpy_client.tickets.create(ticket)
             print(f"Ticket created successfully with ID: {created_ticket.ticket.id}")
-            return created_ticket
+            
+            # Return a serializable response instead of the raw Zendesk object
+            return {
+                "success": True,
+                "ticket_id": created_ticket.ticket.id,
+                "ticket_subject": created_ticket.ticket.subject,
+                "ticket_status": created_ticket.ticket.status,
+                "requester_email": customer_email,
+                "requester_name": customer_name,
+                "assignee_email": assignee_email if assignee else None,
+                "assignee_name": assignee_name if assignee else None,
+                "priority": priority,
+                "department": department,
+                "message": "Ticket created successfully!"
+            }
         else:
             print("Could not create ticket. Customer not found or created.")
-            return None
+            return {
+                "success": False,
+                "error": "Could not create ticket. Customer not found or created."
+            }
 
     def _print_ticket_details(self, ticket):
         """Helper function to print ticket details."""
@@ -221,15 +287,32 @@ class ZendeskIntegration:
             print(f"An error occurred while retrieving assignees: {e}")
 
 if __name__ == '__main__':
-    zendesk = ZendeskIntegration()
+    try:
+        zendesk = ZendeskIntegration()
+        
+        # Test authentication first
+        print("\n🔐 Testing Zendesk authentication...")
+        if not zendesk.test_authentication():
+            print("❌ Cannot proceed without valid authentication.")
+            exit(1)
+        
+        print("✅ Ready to use Zendesk integration!")
+        
+    except ValueError as e:
+        print(f"❌ Configuration error: {e}")
+        exit(1)
+    except Exception as e:
+        print(f"❌ Failed to initialize Zendesk integration: {e}")
+        exit(1)
 
     while True:
         print("\n--- Zendesk Ticket Management ---")
         print("1. Create a new ticket")
         print("2. View tickets")
         print("3. View users")
-        print("4. Exit")
-        choice = input("Enter your choice (1-4): ").strip()
+        print("4. Test authentication")
+        print("5. Exit")
+        choice = input("Enter your choice (1-5): ").strip()
 
         if choice == '1':
             print("\n--- Create New Zendesk Ticket ---")
@@ -298,7 +381,10 @@ if __name__ == '__main__':
                 else:
                     print("Invalid choice. Please enter a number between 1 and 3.")
         elif choice == '4':
+            print("\n🔐 Testing Zendesk authentication...")
+            zendesk.test_authentication()
+        elif choice == '5':
             print("Exiting.")
             break
         else:
-            print("Invalid choice. Please enter a number between 1 and 4.")
+            print("Invalid choice. Please enter a number between 1 and 5.")

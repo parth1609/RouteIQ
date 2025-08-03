@@ -85,9 +85,16 @@ def initialize_clients():
         # Initialize Zendesk client
         if st.session_state.zendesk_client is None:
             st.session_state.zendesk_client = ZendeskIntegration()
-            st.success("✅ Zendesk client initialized successfully!")
+            
+            # Test authentication
+            if st.session_state.zendesk_client.test_authentication():
+                st.success("✅ Zendesk client initialized and authenticated successfully!")
+            else:
+                st.error("❌ Zendesk authentication failed. Please check your credentials.")
+                st.session_state.zendesk_client = None
     except Exception as e:
         st.error(f"❌ Failed to initialize Zendesk client: {str(e)}")
+        st.session_state.zendesk_client = None
 
 def create_zammad_ticket(client, ticket_data):
     """Create a ticket in Zammad"""
@@ -224,7 +231,15 @@ def create_zendesk_ticket(client, ticket_data):
             ticket_description=ticket_data['description'],
             auto_proceed=True  # Automatically proceed with AI classification in web context
         )
-        return result, None
+        
+        # Handle the new response format
+        if isinstance(result, dict) and result.get('success'):
+            return result, None
+        elif isinstance(result, dict) and not result.get('success'):
+            return None, result.get('error', 'Unknown error occurred')
+        else:
+            return result, None
+            
     except Exception as e:
         return None, str(e)
 
@@ -668,7 +683,7 @@ with tab1:
                     'title': title,
                     'customer_email': customer_email,
                     'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    'ticket_id': result.get('id') if isinstance(result, dict) else getattr(result, 'id', 'N/A')
+                    'ticket_id': result.get('ticket_id') if isinstance(result, dict) else getattr(result, 'id', 'N/A')
                 }
                 st.session_state.ticket_history.append(ticket_record)
                 
