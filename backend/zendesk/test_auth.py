@@ -7,6 +7,39 @@ Run this script to check if your Zendesk credentials are working correctly.
 import os
 import sys
 from dotenv import load_dotenv
+from zenpy import Zenpy
+from zenpy.lib.api_objects import Group
+
+# Load environment variables
+load_dotenv()
+
+subdomain = os.getenv('ZENDESK_SUBDOMAIN')
+email = os.getenv('ZENDESK_EMAIL')
+token = os.getenv('ZENDESK_TOKEN')
+
+print("\n--- Extracting all Zendesk groups (departments) ---")
+try:
+    zenpy_client = Zenpy(subdomain=subdomain, email=email, token=token)
+    groups = zenpy_client.groups()
+    found = False
+    for group in groups:
+        print(f"------------------Group ID: {group.id}, Name: {group.name}")
+        found = True
+    if not found:
+        print("No groups found!")
+except Exception as e:
+    print(f"Error extracting groups: {e}")
+
+print("\n--- Creating a new Zendesk group (department) ---")
+try:
+    new_group = Group(name='Product Support')
+    new_group.description = 'This is a description for my new group.'
+    created_group = zenpy_client.groups.create(new_group)
+    print(f"Group '{created_group.name}' created successfully with ID: {created_group.id}")
+except Exception as e:
+    print(f"Error creating group: {e}")
+
+print("\n--- Testing authentication ---")
 
 def test_env_variables():
     """Test if environment variables are loaded correctly"""
@@ -36,8 +69,6 @@ def test_zendesk_connection():
     print("\n🔐 Testing Zendesk connection...")
     
     try:
-        from zenpy import Zenpy
-        
         creds = {
             'email': os.getenv('ZENDESK_EMAIL'),
             'token': os.getenv('ZENDESK_TOKEN'),
