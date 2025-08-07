@@ -3,7 +3,7 @@ import json
 import requests
 from dotenv import load_dotenv
 from zenpy import Zenpy
-from zenpy.lib.api_objects import Ticket, User
+from zenpy.lib.api_objects import Ticket, User, Group
 
 class ZendeskIntegration:
     def __init__(self):
@@ -143,6 +143,30 @@ class ZendeskIntegration:
             return users[0]
         return None
 
+    def find_or_create_group(self, group_name):
+        """
+        Find an existing group by name or create a new one if it doesn't exist.
+        Returns the group object with its ID.
+        """
+        try:
+            # Search for existing group by name
+            groups = list(self.zenpy_client.groups())
+            for group in groups:
+                if group.name.lower() == group_name.lower():
+                    print(f"Found existing group: {group.name} (ID: {group.id})")
+                    return group
+            
+            # Group doesn't exist, create a new one
+            print(f"Creating new group: {group_name}")
+            new_group = Group(name=group_name)
+            created_group = self.zenpy_client.groups.create(new_group)
+            print(f"Created group: {created_group.name} (ID: {created_group.id})")
+            return created_group
+            
+        except Exception as e:
+            print(f"Error finding or creating group '{group_name}': {e}")
+            return None
+
     def create_user(self, email, name, role):
         print(f"Creating a new user with email '{email}' with role '{role}'.")
         try:
@@ -202,13 +226,32 @@ class ZendeskIntegration:
             print("Using default values.")
 
         if customer:
-            ticket = Ticket(
-                subject=ticket_subject,
-                description=ticket_description,
-                requester_id=customer.id,
-                assignee_id=assignee.id if assignee else None,
-                priority=priority
-            )
+            # Find or create the group based on the classified department
+            group = None
+            group_id = None
+            if department and department != "Unknown":
+                group = self.find_or_create_group(department)
+                if group:
+                    group_id = group.id
+                    print(f"Assigning ticket to group: {department} (ID: {group_id})")
+                else:
+                    print(f"Failed to find or create group: {department}")
+            
+            # Create ticket with group assignment
+            ticket_params = {
+                "subject": ticket_subject,
+                "description": ticket_description,
+                "requester_id": customer.id,
+                "priority": priority
+            }
+            
+            if assignee:
+                ticket_params["assignee_id"] = assignee.id
+                
+            if group_id:
+                ticket_params["group_id"] = group_id
+                
+            ticket = Ticket(**ticket_params)
             created_ticket = self.zenpy_client.tickets.create(ticket)
             print(f"Ticket created successfully with ID: {created_ticket.ticket.id}")
             
