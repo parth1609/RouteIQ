@@ -149,22 +149,35 @@ def create_ticket_with_autogroup(ticket: Ticket, prefix: str = "") -> Dict[str, 
         if ticket.group_name:
             print(f"\n🎯 Using explicit group: {ticket.group_name}")
             group_name = ticket.group_name.strip()
-            if group_name not in groups:
+            # Case-insensitive existence check
+            existing_name = next((n for n in groups.keys() if n.lower() == group_name.lower()), None)
+            if not existing_name:
                 print(f"   Group '{group_name}' not found, creating new group...")
-                created = create_prefixed_group(client, group_name, prefix)
-                if created:
-                    groups[created['name']] = created['id']
-                    new_group_created = True
-                    print(f"✅ Created new group: {created['name']} (ID: {created['id']})")
-                    notify_admin(
-                        client,
-                        f"New group created: {created['name']} (ID: {created['id']})\n\n"
-                        f"This group was created for ticket with subject: {ticket.title}",
-                        ticket_id=created.get('id')
-                    )
-                    print("📬 Sent notification to admin about new group")
-            group_id = groups.get(group_name)
-            resolved_group_name = group_name
+                try:
+                    created = create_prefixed_group(client, group_name, prefix)
+                    if created and isinstance(created, dict) and created.get('id'):
+                        groups[created['name']] = created['id']
+                        new_group_created = True
+                        existing_name = created['name']
+                        print(f"✅ Created new group: {created['name']} (ID: {created['id']})")
+                        notify_admin(
+                            client,
+                            f"New group created: {created['name']} (ID: {created['id']})\n\n"
+                            f"This group was created for ticket with subject: {ticket.title}",
+                            ticket_id=created.get('id')
+                        )
+                        print("📬 Sent notification to admin about new group")
+                except Exception as ce:
+                    msg = str(ce)
+                    if "Name has already been taken" in msg:
+                        # Another run likely created it; refresh groups and continue
+                        print("   Detected duplicate-name response; refreshing groups and proceeding with existing group")
+                        groups = get_all_groups(client)
+                        existing_name = next((n for n in groups.keys() if n.lower() == group_name.lower()), None)
+                    else:
+                        raise
+            group_id = groups.get(existing_name or group_name)
+            resolved_group_name = existing_name or group_name
             print(f"   Using group ID: {group_id}")
         else:
             # 2) Predict department using classifier
@@ -201,26 +214,40 @@ def create_ticket_with_autogroup(ticket: Ticket, prefix: str = "") -> Dict[str, 
                 except Exception:
                     print(f"⚠️  Invalid priority '{priority}', using default")
             
-            # Create group if it doesn't exist
-            if dept_name not in groups:
+            # Create group if it doesn't exist (case-insensitive)
+            existing_name = next((n for n in groups.keys() if n.lower() == dept_name.lower()), None)
+            if not existing_name:
                 print(f"   Group '{dept_name}' not found, creating new group...")
-                created = create_prefixed_group(client, dept, prefix)
-                if created:
-                    groups[created['name']] = created['id']
-                    new_group_created = True
-                    print(f"✅ Created new group: {created['name']} (ID: {created['id']})")
-                    notify_admin(
-                        client,
-                        f"New department group created: {created['name']} (ID: {created['id']})\n\n"
-                        f"Predicted from ticket subject: {ticket.title}\n"
-                        f"Please assign appropriate permissions in Admin > Roles.",
-                        ticket_id=created.get('id')
-                    )
-                    print("📬 Sent notification to admin about new department")
+                try:
+                    created = create_prefixed_group(client, dept, prefix)
+                    if created and isinstance(created, dict) and created.get('id'):
+                        groups[created['name']] = created['id']
+                        new_group_created = True
+                        existing_name = created['name']
+                        print(f"✅ Created new group: {created['name']} (ID: {created['id']})")
+                        notify_admin(
+                            client,
+                            f"New department group created: {created['name']} (ID: {created['id']})\n\n"
+                            f"Predicted from ticket subject: {ticket.title}\n"
+                            f"Please assign appropriate permissions in Admin > Roles.",
+                            ticket_id=created.get('id')
+                        )
+                        print("📬 Sent notification to admin about new department")
+                except Exception as ce:
+                    msg = str(ce)
+                    if "Name has already been taken" in msg:
+                        print("   Detected duplicate-name response; refreshing groups and proceeding with existing group")
+                        groups = get_all_groups(client)
+                        existing_name = next((n for n in groups.keys() if n.lower() == dept_name.lower()), None)
+                    else:
+                        raise
             else:
-                print(f"   Using existing group: {dept_name} (ID: {groups[dept_name]})")
-                
-            group_id = groups.get(dept_name)
+                print(f"   Using existing group: {existing_name} (ID: {groups[existing_name]})")
+            
+            # Determine group_id and resolved name
+            final_name = existing_name or dept_name
+            group_id = groups.get(final_name)
+            resolved_group_name = final_name
 
         # 3) Fallback to first available group if needed
         if not group_id:
