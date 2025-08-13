@@ -36,4 +36,6 @@ async def root():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
-# python -m uvicorn ticket_classifier.app.main:app --reload
+
+# from root dir
+# python -m uvicorn backend.Dataset.ticket_classifier.app.main:app --reload 
