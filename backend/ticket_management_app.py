@@ -1099,3 +1099,6 @@ st.markdown(
 
 if __name__ == "__main__":
     main()
+
+# from root dir
+#  cd backend && streamlit run ticket_management_app.py
