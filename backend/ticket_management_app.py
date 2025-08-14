@@ -635,6 +635,16 @@ with tab1:
                     group_options = ["Auto (Use AI)", "Users"]
                 
                 group = st.selectbox("Group/Department", group_options)
+                
+                # Step 1: Show instructions before classification and naming convention guidance
+                st.info("Please create the dept/group what they want and if dept/group is already there, give all the permissions as an admin/agent.")
+                st.caption("Naming convention for new groups — Correct: 'Customer Service'; Incorrect: 'Dept - Customer Service'.")
+                # Ask for permission to create a new group only if it's missing
+                create_if_missing = st.checkbox(
+                    "Allow creating new department/group if missing",
+                    value=False,
+                    help="When enabled, the app will create the predicted department/group in Zammad if it does not exist."
+                )
             
             elif system == "Zendesk":
                 st.info("💡 **Assignee fields are optional.** If your Zendesk account has reached the agent limit, tickets will be created without assignees.")
@@ -671,7 +681,47 @@ with tab1:
                 if system == "Zammad":
                     # Use auto-group assignment when selected
                     if group == "Auto (Use AI)":
+                        # Step 2 & 3: Predict department and resolve existing group before attempting creation
+                        handled = False
                         try:
+                            # Predict department
+                            cls = predict_ticket_category(description)
+                            dept = (cls.get("department") if isinstance(cls, dict) else None) or "General"
+                            # Apply prefix policy for existence check (we prefer no prefix for new groups per spec)
+                            target_group = dept
+                            # Resolve existing groups
+                            z_client = getattr(st.session_state, 'zammad_client', None)
+                            if not z_client:
+                                z_client = initialize_zammad_client()
+                                st.session_state.zammad_client = z_client
+                            groups_now = get_all_groups(z_client) if z_client else {}
+                            resolved_group = None
+                            for gname in groups_now.keys():
+                                if gname.lower() == target_group.lower():
+                                    resolved_group = gname
+                                    break
+                            if resolved_group:
+                                # Group exists -> assign directly
+                                retry_ticket_data = dict(ticket_data)
+                                retry_ticket_data['group'] = resolved_group
+                                result, error = create_zammad_ticket(z_client, retry_ticket_data)
+                                if not error and isinstance(result, dict):
+                                    result.setdefault("assigned_group", resolved_group)
+                                    result.setdefault("new_group_created", False)
+                                    result.setdefault("permission_warning", False)
+                                    result.setdefault("group", resolved_group)
+                                handled = True
+                            else:
+                                # Group missing -> ask for permission to create
+                                if not create_if_missing:
+                                    st.warning(f"Predicted group '{target_group}' does not exist. Enable 'Allow creating new department/group if missing' to create it now.")
+                                    result, error = None, "Predicted group missing and creation not authorized by user."
+                                    handled = True
+                        except Exception as pree:
+                            # If prediction fails for any reason, fall back to the existing autogroup flow
+                            handled = False
+
+                        if not handled:
                             # Build Ticket model for auto-group API
                             z_customer = Customer(
                                 email=customer_email,
@@ -684,16 +734,34 @@ with tab1:
                                 group_name=None,  # trigger prediction path
                                 customer=z_customer,
                             )
-                            # Optional: allow group prefix via env var
-                            group_prefix = os.getenv("ZAMMAD_GROUP_PREFIX", "")
+                            # Step 4: Enforce naming convention (no prefix) when creating new groups per spec
+                            # If user allowed creation, force empty prefix; otherwise keep any env default
+                            group_prefix = "" if create_if_missing else os.getenv("ZAMMAD_GROUP_PREFIX", "")
                             api_resp = zammad_create_ticket_with_autogroup(z_ticket, prefix=group_prefix)
                             if api_resp and isinstance(api_resp, dict) and api_resp.get("success"):
-                                result, error = api_resp, None
+                                # Normalize keys so the UI can render consistently
+                                normalized = dict(api_resp)
+                                resolved = normalized.get("resolved_group") or normalized.get("group")
+                                if resolved:
+                                    normalized.setdefault("assigned_group", resolved)
+                                    normalized.setdefault("group", resolved)
+                                # Surface created_group_name if present in API response
+                                if "created_group_name" not in normalized and normalized.get("new_group_created"):
+                                    normalized["created_group_name"] = resolved
+                                result, error = normalized, None
                             else:
                                 # Normalize error
                                 msg = api_resp.get("error") if isinstance(api_resp, dict) else "Unknown error"
                                 # Handle duplicate group error gracefully by retrying with existing group
-                                if isinstance(msg, str) and "Name has already been taken" in msg:
+                                # Consider variations like error_human and case differences
+                                duplicate_taken = False
+                                if isinstance(msg, str) and msg:
+                                    duplicate_taken = ("name has already been taken" in msg.lower()) or ("already exists" in msg.lower())
+                                if not duplicate_taken and isinstance(api_resp, dict):
+                                    human = str(api_resp.get("error_human", ""))
+                                    if human:
+                                        duplicate_taken = "name has already been taken" in human.lower()
+                                if duplicate_taken:
                                     try:
                                         # Predict department and resolve to existing group name
                                         cls = predict_ticket_category(description)
@@ -731,16 +799,54 @@ with tab1:
                                                     result.setdefault("assigned_group", resolved_group)
                                                     result.setdefault("new_group_created", False)
                                                     result.setdefault("permission_warning", False)
+                                                    # Also surface the group explicitly for UI consistency
+                                                    result.setdefault("group", resolved_group)
                                             else:
                                                 result, error = None, error
                                         else:
-                                            result, error = None, msg
+                                            # No matching existing group found; surface clear guidance
+                                            result, error = None, (
+                                                "Duplicate group name detected but existing group could not be resolved. "
+                                                "Please verify ZAMMAD_GROUP_PREFIX and ensure the group exists, then try again."
+                                            )
                                     except Exception as re:
                                         result, error = None, f"Auto-group retry failed: {str(re)}"
                                 else:
-                                    result, error = None, msg
-                        except Exception as e:
-                            result, error = None, str(e)
+                                    # If not a duplicate-name case, handle 'No valid group available' by falling back
+                                    fallback_triggered = isinstance(msg, str) and ("no valid group available" in msg.lower())
+                                    if fallback_triggered:
+                                        try:
+                                            z_client = getattr(st.session_state, 'zammad_client', None)
+                                            if not z_client:
+                                                z_client = initialize_zammad_client()
+                                                st.session_state.zammad_client = z_client
+                                            groups_now = get_all_groups(z_client) if z_client else {}
+                                            resolved_group = None
+                                            # Prefer 'Users' if available
+                                            for gname in groups_now.keys():
+                                                if gname.lower() == 'users':
+                                                    resolved_group = gname
+                                                    break
+                                            # Otherwise take first available
+                                            if not resolved_group and groups_now:
+                                                resolved_group = next(iter(groups_now.keys()))
+                                            if resolved_group:
+                                                retry_ticket_data = dict(ticket_data)
+                                                retry_ticket_data['group'] = resolved_group
+                                                result, error = create_zammad_ticket(z_client, retry_ticket_data)
+                                                if not error and isinstance(result, dict):
+                                                    result.setdefault("assigned_group", resolved_group)
+                                                    result.setdefault("new_group_created", False)
+                                                    result.setdefault("permission_warning", True)
+                                                    result.setdefault("fallback_group_used", True)
+                                                    result.setdefault("fallback_group", resolved_group)
+                                                    result.setdefault("group", resolved_group)
+                                            else:
+                                                result, error = None, msg
+                                        except Exception as fe:
+                                            result, error = None, f"Fallback group retry failed: {str(fe)}"
+                                    else:
+                                        result, error = None, msg
                     else:
                         # Fallback to existing direct group flow
                         result, error = create_zammad_ticket(client, ticket_data)
@@ -778,6 +884,18 @@ with tab1:
                         if fallback_group:
                             warn_txt += f"Ticket was created in fallback group '{fallback_group}'."
                         st.warning(warn_txt)
+                        # Provide admin steps even when we fell back (not only when a group was newly created)
+                        group_to_grant = result.get("created_group_name") or result.get("assigned_group") or result.get("resolved_group") or result.get("group") or "<group>"
+                        st.info(
+                            "\n".join([
+                                "ACTION REQUIRED: Grant permissions for the intended department/group",
+                                "1. Go to Admin > Roles",
+                                "2. Edit the appropriate role for the API user",
+                                f"3. Under 'Group Permissions', set '{group_to_grant}' to 'Full'",
+                                "4. Save changes",
+                                "Once granted, future tickets will be created directly in this group without fallback."
+                            ])
+                        )
                 
                 # Add to history
                 ticket_record = {
