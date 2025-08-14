@@ -3,7 +3,7 @@ import json
 import requests
 from dotenv import load_dotenv
 from zenpy import Zenpy
-from zenpy.lib.api_objects import Ticket, User, Group
+from zenpy.lib.api_objects import Ticket, User, Group, GroupMembership
 
 class ZendeskIntegration:
     def __init__(self):
@@ -167,6 +167,59 @@ class ZendeskIntegration:
             print(f"Error finding or creating group '{group_name}': {e}")
             return None
 
+    def ensure_agent_role(self, user):
+        """
+        Ensure the given user has 'agent' role. If not, try to upgrade the role.
+        Handles MaxAgentExceeded gracefully.
+        Returns True if user is an agent (after ensuring), else False.
+        """
+        try:
+            if getattr(user, 'role', None) == 'agent':
+                return True
+            # Try to upgrade the role to agent
+            original_role = getattr(user, 'role', None)
+            user.role = 'agent'
+            try:
+                updated = self.zenpy_client.users.update(user)
+                print(f"Upgraded user '{user.email}' from role '{original_role}' to 'agent'.")
+                return True
+            except Exception as e:
+                error_str = str(e)
+                if 'MaxAgentExceeded' in error_str:
+                    print(f"⚠️ Agent limit exceeded. Cannot upgrade user '{user.email}' to agent.")
+                    return False
+                print(f"❌ Failed to upgrade user '{user.email}' to agent: {error_str}")
+                return False
+        except Exception as e:
+            print(f"❌ Error ensuring agent role for '{getattr(user, 'email', 'unknown')}': {e}")
+            return False
+
+    def ensure_user_in_group(self, user_id, group_id):
+        """
+        Ensure the user is a member of the specified group. If not, create the membership.
+        Returns True if membership exists or was created; False otherwise.
+        """
+        try:
+            # Check existing memberships for the user
+            memberships = []
+            try:
+                memberships = list(self.zenpy_client.group_memberships(user=user_id))
+            except Exception:
+                # Fallback: some Zenpy versions may not accept the filter param
+                memberships = list(self.zenpy_client.group_memberships())
+            for m in memberships:
+                if getattr(m, 'group_id', None) == group_id and getattr(m, 'user_id', None) == user_id:
+                    print(f"User {user_id} already a member of group {group_id}.")
+                    return True
+            # Create membership
+            gm = GroupMembership(user_id=user_id, group_id=group_id)
+            self.zenpy_client.group_memberships.create(gm)
+            print(f"Added user {user_id} to group {group_id}.")
+            return True
+        except Exception as e:
+            print(f"❌ Failed to ensure group membership for user {user_id} in group {group_id}: {e}")
+            return False
+
     def create_user(self, email, name, role):
         print(f"Creating a new user with email '{email}' with role '{role}'.")
         try:
@@ -202,6 +255,11 @@ class ZendeskIntegration:
                     print(f"⚠️ Could not create assignee user: {str(e)}")
                     print("Ticket will be created without assignee.")
                     assignee = None
+            else:
+                # Ensure the existing user is an agent; if can't upgrade, skip assignee
+                if not self.ensure_agent_role(assignee):
+                    print("Proceeding without assignee due to role limitations.")
+                    assignee = None
 
         priority = "normal"
         department = "IT Support"
@@ -236,7 +294,27 @@ class ZendeskIntegration:
                     print(f"Assigning ticket to group: {department} (ID: {group_id})")
                 else:
                     print(f"Failed to find or create group: {department}")
-            
+            # Prepare diagnostics
+            diagnostics = {
+                "assignee_upgraded_to_agent": False,
+                "assignee_added_to_group": False,
+                "group_id": group_id,
+            }
+
+            # Ensure assignee is agent and in group BEFORE assignment
+            if assignee:
+                upgraded = self.ensure_agent_role(assignee)
+                diagnostics["assignee_upgraded_to_agent"] = upgraded if getattr(assignee, 'role', None) != 'agent' else True
+                if not upgraded:
+                    print("Proceeding without assignee due to role limitations.")
+                    assignee = None
+                elif group_id:
+                    in_group = self.ensure_user_in_group(assignee.id, group_id)
+                    diagnostics["assignee_added_to_group"] = in_group
+                    if not in_group:
+                        print("Proceeding without assignee because adding to group failed.")
+                        assignee = None
+
             # Create ticket with group assignment
             ticket_params = {
                 "subject": ticket_subject,
@@ -267,6 +345,7 @@ class ZendeskIntegration:
                 "assignee_name": assignee_name if assignee else None,
                 "priority": priority,
                 "department": department,
+                **diagnostics,
                 "message": "Ticket created successfully!"
             }
         else:
