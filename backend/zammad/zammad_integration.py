@@ -40,14 +40,9 @@ def initialize_zammad_client():
     except Exception as e:
         raise RuntimeError(f"Failed to initialize Zammad client: {str(e)}")
 
-# Initialize the client
-try:
-    client = initialize_zammad_client()
-except Exception as e:
-    print(f"Error: {e}")
-    exit(1)
-
-
+# Note: Do not initialize a global client at import time.
+# This module is also used by a FastAPI app; failing here would crash the server.
+client = None  # For backwards compatibility in scripts; initialized in main()
 
 
 def get_all_groups(client_obj) -> Dict[str, int]:
@@ -341,7 +336,14 @@ def main():
     print("🚀 Starting Zammad Integration Script")
     print("=" * 60)
 
-    create_ticket_flow(client, interactive=True)
+    # Initialize the client for CLI/script usage only
+    try:
+        local_client = initialize_zammad_client()
+    except Exception as e:
+        print(f"Error: {e}")
+        return
+
+    create_ticket_flow(local_client, interactive=True)
 
     print("\n✅ Zammad Integration Script finished!")
 
