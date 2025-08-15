@@ -1,0 +1,44 @@
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from backend.zendesk.zendesk_integration import ZendeskIntegration
+from .routers.zendesk_routes import router as zendesk_router
+from .routers.classifier_routes import router as classifier_router
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize shared integrations here
+    try:
+        app.state.zendesk = ZendeskIntegration()
+    except Exception as e:
+        # Defer fatal errors to endpoint-level checks to keep the server up
+        app.state.zendesk = None
+        print(f"[lifespan] Warning: Zendesk integration failed to init: {e}")
+    yield
+
+
+app = FastAPI(title="RouteIQ API", version="1.0.0", lifespan=lifespan)
+
+# CORS for Streamlit (adjust origins as needed)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # tighten in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Routers
+app.include_router(zendesk_router, prefix="/api/v1/zendesk", tags=["zendesk"]) 
+app.include_router(classifier_router, prefix="/api/v1/classifier", tags=["classifier"]) 
+
+
+@app.get("/api/v1/health")
+def health():
+    status = {
+        "api": "ok",
+        "zendesk_integration": "ready" if getattr(app.state, "zendesk", None) else "unavailable",
+    }
+    return status
