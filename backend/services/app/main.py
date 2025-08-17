@@ -52,3 +52,11 @@ def health():
         "zammad_integration": "ready" if getattr(app.state, "zammad", None) else "unavailable",
     }
     return status
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("backend.services.app.main:app", host="127.0.0.1", port=8000, reload=True)
+    
+# from main  dir
+# python -m uvicorn backend.services.app.main:app --reload --host 127.0.0.1 --port 8000
