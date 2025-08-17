@@ -1,0 +1,292 @@
+{
+  "tech_stack": ["Python", "FastAPI", "scikit-learn", "nltk", "Pydantic", "Uvicorn", "Streamlit", "PostgreSQL", "Redis"],
+  "features": [
+    {
+      "name": "Ticket Classification API",
+      "description": "ML-powered API to classify support tickets into departments and priorities using trained models",
+      "files": [
+        "backend/Dataset/ticket_classifier/app/main.py",
+        "backend/Dataset/ticket_classifier/app/api/endpoints.py",
+        "backend/Dataset/ticket_classifier/app/services/classifier_service.py",
+        "backend/Dataset/ticket_classifier/app/models/schemas.py"
+      ],
+      "api_doc": {
+        "openapi": "3.0.0",
+        "info": {
+          "title": "Ticket Classification API",
+          "version": "1.0.0",
+          "description": "API for classifying support tickets into departments and priorities"
+        },
+        "servers": [
+          {
+            "url": "http://127.0.0.1:8000",
+            "description": "Local development server"
+          }
+        ],
+        "paths": {
+          "/": {
+            "get": {
+              "summary": "Root endpoint",
+              "responses": {
+                "200": {
+                  "description": "Service status",
+                  "content": {
+                    "application/json": {
+                      "schema": {
+                        "type": "object",
+                        "properties": {
+                          "status": {"type": "string"},
+                          "service": {"type": "string"},
+                          "version": {"type": "string"}
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "/api/v1/health": {
+            "get": {
+              "summary": "Health check",
+              "responses": {
+                "200": {
+                  "description": "Health status",
+                  "content": {
+                    "application/json": {
+                      "schema": {
+                        "type": "object",
+                        "properties": {
+                          "status": {"type": "string"},
+                          "message": {"type": "string"},
+                          "version": {"type": "string"}
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "/api/v1/predict": {
+            "post": {
+              "summary": "Predict ticket category",
+              "description": "Classify a ticket description into department and priority",
+              "requestBody": {
+                "required": true,
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "type": "object",
+                      "properties": {
+                        "description": {
+                          "type": "string",
+                          "description": "Ticket description to classify"
+                        }
+                      },
+                      "required": ["description"]
+                    }
+                  }
+                }
+              },
+              "responses": {
+                "200": {
+                  "description": "Classification result",
+                  "content": {
+                    "application/json": {
+                      "schema": {
+                        "type": "object",
+                        "properties": {
+                          "description": {"type": "string"},
+                          "department": {"type": "string"},
+                          "priority": {"type": "string"},
+                          "success": {"type": "boolean"}
+                        }
+                      }
+                    }
+                  }
+                },
+                "400": {
+                  "description": "Bad request"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "RouteIQ Main API",
+      "description": "Main FastAPI service with Zendesk and Zammad integrations for ticket management",
+      "files": [
+        "backend/services/app/main.py",
+        "backend/services/app/routers/zendesk_routes.py",
+        "backend/services/app/routers/zammad_routes.py",
+        "backend/services/app/routers/classifier_routes.py"
+      ],
+      "api_doc": {
+        "openapi": "3.0.0",
+        "info": {
+          "title": "RouteIQ API",
+          "version": "1.0.0",
+          "description": "Unified ticket management API with Zendesk and Zammad integrations"
+        },
+        "servers": [
+          {
+            "url": "http://127.0.0.1:8000",
+            "description": "Local development server"
+          }
+        ],
+        "paths": {
+          "/api/v1/health": {
+            "get": {
+              "summary": "Overall health check",
+              "responses": {
+                "200": {
+                  "description": "System health status",
+                  "content": {
+                    "application/json": {
+                      "schema": {
+                        "type": "object",
+                        "properties": {
+                          "api": {"type": "string"},
+                          "zendesk_integration": {"type": "string"},
+                          "zammad_integration": {"type": "string"}
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "/api/v1/zendesk/health": {
+            "get": {
+              "summary": "Zendesk integration health",
+              "responses": {
+                "200": {
+                  "description": "Zendesk connection status"
+                }
+              }
+            }
+          },
+          "/api/v1/zammad/health": {
+            "get": {
+              "summary": "Zammad integration health",
+              "responses": {
+                "200": {
+                  "description": "Zammad connection status"
+                }
+              }
+            }
+          },
+          "/api/v1/zammad/tickets": {
+            "post": {
+              "summary": "Create Zammad ticket",
+              "description": "Create a new ticket in Zammad with optional AI classification",
+              "requestBody": {
+                "required": true,
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "type": "object",
+                      "properties": {
+                        "title": {"type": "string"},
+                        "description": {"type": "string"},
+                        "customer_email": {"type": "string"},
+                        "customer_firstname": {"type": "string"},
+                        "customer_lastname": {"type": "string"},
+                        "priority": {"type": "string"},
+                        "group_name": {"type": "string"}
+                      },
+                      "required": ["title", "description", "customer_email"]
+                    }
+                  }
+                }
+              },
+              "responses": {
+                "200": {
+                  "description": "Ticket created successfully"
+                }
+              }
+            }
+          },
+          "/api/v1/classifier/predict": {
+            "post": {
+              "summary": "Simple classifier predict",
+              "description": "Basic heuristic-based ticket classification",
+              "requestBody": {
+                "required": true,
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "type": "object",
+                      "properties": {
+                        "description": {"type": "string"}
+                      },
+                      "required": ["description"]
+                    }
+                  }
+                }
+              },
+              "responses": {
+                "200": {
+                  "description": "Classification result"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Zendesk Integration",
+      "description": "Integration service for Zendesk ticket management with AI classification",
+      "files": [
+        "backend/zendesk/zendesk_integration.py",
+        "backend/zendesk/zendesk_api.py"
+      ],
+      "api_doc": {
+        "openapi": "3.0.0",
+        "info": {
+          "title": "Zendesk Integration",
+          "version": "1.0.0",
+          "description": "Zendesk ticket management with ML classification"
+        }
+      }
+    },
+    {
+      "name": "Zammad Integration",
+      "description": "Integration service for Zammad ticket management with AI classification and group management",
+      "files": [
+        "backend/zammad/zammad_integration.py",
+        "backend/zammad/zammad_api.py",
+        "backend/zammad/zammad_autogroup_api.py",
+        "backend/zammad/group_tools.py"
+      ],
+      "api_doc": {
+        "openapi": "3.0.0",
+        "info": {
+          "title": "Zammad Integration",
+          "version": "1.0.0",
+          "description": "Zammad ticket management with ML classification and auto-grouping"
+        }
+      }
+    },
+    {
+      "name": "Streamlit Dashboard",
+      "description": "Web-based dashboard for ticket management across multiple platforms",
+      "files": [
+        "backend/ticket_management_app.py"
+      ],
+      "api_doc": {
+        "openapi": "3.0.0",
+        "info": {
+          "title": "Streamlit Dashboard",
+          "version": "1.0.0",
+          "description": "Interactive web dashboard for ticket management"
+        }
+      }
+    }
+  ]
+}

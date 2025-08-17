@@ -1,0 +1,42 @@
+[
+  {
+    "id": "TC001",
+    "title": "test_routeiq_overall_health_check",
+    "description": "Verify the overall health check endpoint /api/v1/health returns the correct system health status including api, zendesk_integration, and zammad_integration fields with HTTP 200."
+  },
+  {
+    "id": "TC002",
+    "title": "test_zendesk_integration_health_check",
+    "description": "Verify the Zendesk integration health endpoint /api/v1/zendesk/health returns the Zendesk connection status with HTTP 200."
+  },
+  {
+    "id": "TC003",
+    "title": "test_zammad_integration_health_check",
+    "description": "Verify the Zammad integration health endpoint /api/v1/zammad/health returns the Zammad connection status with HTTP 200."
+  },
+  {
+    "id": "TC004",
+    "title": "test_create_zammad_ticket_with_ai_classification",
+    "description": "Test the ticket creation endpoint /api/v1/zammad/tickets to create a new ticket in Zammad with required fields and optional AI classification, ensuring the ticket is created successfully and returns HTTP 200."
+  },
+  {
+    "id": "TC005",
+    "title": "test_classifier_simple_predict_endpoint",
+    "description": "Verify the simple classifier predict endpoint /api/v1/classifier/predict accepts a ticket description and returns a classification result with HTTP 200."
+  },
+  {
+    "id": "TC006",
+    "title": "test_ticket_classification_api_root_endpoint",
+    "description": "Verify the root endpoint / of the Ticket Classification API returns service status with fields status, service, and version with HTTP 200."
+  },
+  {
+    "id": "TC007",
+    "title": "test_ticket_classification_api_health_check",
+    "description": "Verify the health check endpoint /api/v1/health of the Ticket Classification API returns health status with fields status, message, and version with HTTP 200."
+  },
+  {
+    "id": "TC008",
+    "title": "test_ticket_classification_api_predict_endpoint",
+    "description": "Test the ticket classification prediction endpoint /api/v1/predict accepts a valid ticket description and returns classification results including department, priority, and success flag with HTTP 200, and returns HTTP 400 for invalid requests."
+  }
+]

@@ -1,0 +1,16 @@
+{
+  "status": "commited",
+  "type": "backend",
+  "scope": "codebase",
+  "localEndpoint": "http://localhost:8000",
+  "backendAuthType": "public",
+  "executionArgs": {
+    "projectName": "RouteIQ",
+    "projectPath": "c:\\Users\\parth\\OneDrive\\Desktop\\one\\RouteIQ",
+    "testIds": [],
+    "additionalInstruction": "Execute all test cases from the backend test plan, focusing on the Dataset directory components including ticket classifier API endpoints, health checks, and integration tests",
+    "envs": {
+      "API_KEY": "sk-user-ku_QPHi2nllcSfrLKI9zW5Zd6j9e0at8F_uR5drroeeo_sGNmrKV2GApKd23Gx_VAkdeKNYrOVjv_nvEs1JGX8fjB1pxC0A63Cy5fhZFdhuD3GX9W5oHoE_6jKKJIkZsp3I"
+    }
+  }
+}
