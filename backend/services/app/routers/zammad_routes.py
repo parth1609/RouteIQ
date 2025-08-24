@@ -11,6 +11,7 @@ from ..schemas.zammad import (
 from backend.zammad.zammad_integration import (
     get_all_groups,
     find_or_create_customer,
+    list_tickets as zammad_list_tickets,
 )
 
 router = APIRouter()
@@ -19,7 +20,13 @@ router = APIRouter()
 def get_client(request: Request):
     client = getattr(request.app.state, "zammad", None)
     if not client:
-        raise HTTPException(status_code=503, detail="Zammad integration not available (check environment credentials)")
+        init_err = getattr(request.app.state, "zammad_error", None)
+        detail = {
+            "error": "Zammad integration not available",
+            "hint": "Check ZAMMAD_URL and credentials in .env",
+            "init_error": init_err,
+        }
+        raise HTTPException(status_code=503, detail=detail)
     return client
 
 
@@ -43,6 +50,29 @@ def _classify(description: str) -> tuple[Optional[str], Optional[str]]:
     except Exception:
         pass
     return None, None
+
+
+@router.get("/get_all_tickets")
+def list_tickets(
+    request: Request,
+    state_id: int | None = None,
+    limit: int = 50,
+):
+    """List Zammad tickets. Optional filter by state_id and limit results.
+
+    Examples:
+    - /api/v1/zammad/tickets
+    - /api/v1/zammad/tickets?state_id=4
+    - /api/v1/zammad/tickets?limit=20
+    """
+    try:
+        client = get_client(request)
+        items = zammad_list_tickets(client, state_id=state_id, limit=limit)
+        return {"count": len(items), "tickets": items}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/tickets", response_model=ZammadTicketCreateResponse)

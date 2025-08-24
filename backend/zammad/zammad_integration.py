@@ -23,6 +23,7 @@ def initialize_zammad_client():
 
     client = None
     try:
+        print(f"[Zammad] Using base URL: {ZAMMAD_URL}")
         if ZAMMAD_HTTP_TOKEN:
             client = ZammadAPI(url=ZAMMAD_URL, http_token=ZAMMAD_HTTP_TOKEN)
         elif ZAMMAD_USERNAME and ZAMMAD_PASSWORD:
@@ -32,10 +33,12 @@ def initialize_zammad_client():
 
         # Test connection
         current_user = client.user.me()
-        if not current_user or 'email' not in current_user:
+        # Some instances may not return 'email'; accept if we have at least an id
+        if not current_user or not isinstance(current_user, dict) or not current_user.get('id'):
             raise ValueError("Failed to authenticate with Zammad: Invalid response from server")
-            
-        print(f"Successfully connected to Zammad as: {current_user.get('email')}")
+
+        ident = current_user.get('email') or current_user.get('login') or current_user.get('id')
+        print(f"Successfully connected to Zammad as: {ident}")
         return client
 
     except Exception as e:
@@ -68,6 +71,41 @@ def get_all_groups(client_obj) -> Dict[str, int]:
         print(f"Warning: Unable to fetch groups: {e}")
     print("---------------------------------------------")
     return groups_map
+
+
+def _ticket_to_dict(ticket: dict) -> dict:
+    """Serialize a Zammad ticket dict into a JSON-safe minimal representation."""
+    try:
+        return {
+            "id": ticket.get("id"),
+            "number": ticket.get("number"),
+            "title": ticket.get("title"),
+            "state_id": ticket.get("state_id"),
+            "priority_id": ticket.get("priority_id"),
+            "group_id": ticket.get("group_id"),
+            "customer_id": ticket.get("customer_id"),
+            "created_at": ticket.get("created_at"),
+            "updated_at": ticket.get("updated_at"),
+        }
+    except Exception as e:
+        return {"error": f"failed to serialize ticket: {e}"}
+
+
+def list_tickets(client_obj, state_id: int | None = None, limit: int = 50) -> list[dict]:
+    """Return a list of tickets from Zammad as dicts. Optional filter by state_id and limit results."""
+    try:
+        items: list[dict] = []
+        # Most zammad-py versions support .ticket.all(); .ticket.search could be used for filtering
+        tickets = list(client_obj.ticket.all())
+        for t in tickets:
+            if state_id is not None and t.get("state_id") != state_id:
+                continue
+            items.append(_ticket_to_dict(t))
+            if len(items) >= max(1, int(limit)):
+                break
+        return items
+    except Exception as e:
+        raise RuntimeError(f"Failed to list Zammad tickets: {e}")
 
 def validate_email(email: str) -> bool:
     """Basic email validation"""

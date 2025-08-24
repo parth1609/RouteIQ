@@ -25,8 +25,10 @@ async def lifespan(app: FastAPI):
     # Initialize Zammad client
     try:
         app.state.zammad = initialize_zammad_client()
+        app.state.zammad_error = None
     except Exception as e:
         app.state.zammad = None
+        app.state.zammad_error = str(e)
         print(f"[lifespan] Warning: Zammad client failed to init: {e}")
     yield
 
