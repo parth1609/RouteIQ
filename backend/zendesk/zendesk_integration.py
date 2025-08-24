@@ -1,28 +1,21 @@
 import os
-import os
 import json
 import requests
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from zenpy import Zenpy
 from zenpy.lib.api_objects import Ticket, User, Group, GroupMembership
 from pathlib import Path
 
+# Load environment variables from project root .env regardless of current working directory
+load_dotenv(find_dotenv(usecwd=True), override=True)
+
 class ZendeskIntegration:
     def __init__(self):
-        # Load .env from backend directory (and common fallbacks)
-        # Priority: backend/.env -> project_root/.env -> CWD/.env
+        # Ensure env is loaded (won't override values set at import time)
         try:
-            env_paths = [
-                Path(__file__).resolve().parents[1] / ".env",  # backend/.env
-                Path(__file__).resolve().parents[2] / ".env",  # repo root .env
-                Path.cwd() / ".env",                           # current working dir
-            ]
-            for p in env_paths:
-                if p.exists():
-                    load_dotenv(dotenv_path=p, override=False)
+            load_dotenv(find_dotenv(usecwd=True), override=False)
         except Exception:
-            # Fallback to default search if anything goes wrong
-            load_dotenv()
+            pass
         
         # Load and validate Zendesk credentials
         self.zendesk_email = os.getenv('ZENDESK_EMAIL')

@@ -2,6 +2,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+# Ensure environment variables are loaded from project root, regardless of CWD
+from dotenv import load_dotenv, find_dotenv
+_ = load_dotenv(find_dotenv(usecwd=True), override=True)
+
 from backend.zendesk.zendesk_integration import ZendeskIntegration
 from backend.zammad.zammad_integration import initialize_zammad_client
 from .routers.zendesk_routes import router as zendesk_router

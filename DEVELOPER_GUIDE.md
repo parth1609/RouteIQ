@@ -10,6 +10,7 @@ Goals:
 
 ## Quick Start
 - Prereqs: Python 3.10+, pip, valid Zendesk and/or Zammad credentials.
+- Env loading: The API auto-loads environment variables from the repository root `.env` using `python-dotenv` + `find_dotenv`. You can still keep a fallback `.env` in `backend/`, but the root `.env` is preferred and will be loaded regardless of where you launch the server.
 - Create `.env` (at repo root or `backend/`) with:
   - Zendesk:
     - `ZENDESK_EMAIL=you@example.com`

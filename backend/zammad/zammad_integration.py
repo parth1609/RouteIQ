@@ -2,11 +2,12 @@ import os
 import json
 import requests
 from dotenv import load_dotenv, find_dotenv
+
 from zammad_py import ZammadAPI
 from typing import Dict
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from project root .env regardless of current working directory
+load_dotenv(find_dotenv(usecwd=True), override=True)
 
 def initialize_zammad_client():
     """
