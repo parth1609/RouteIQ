@@ -5,6 +5,9 @@ import requests
 from ..schemas.zammad import (
     ZammadTicketCreateRequest,
     ZammadTicketCreateResponse,
+    ZammadTicketUpdateRequest,
+    ZammadTicketUpdateResponse,
+    ZammadTicketDeleteResponse,
 )
 
 # Reuse integration helpers from backend package
@@ -12,6 +15,9 @@ from backend.zammad.zammad_integration import (
     get_all_groups,
     find_or_create_customer,
     list_tickets as zammad_list_tickets,
+    get_ticket as zammad_get_ticket,
+    update_ticket as zammad_update_ticket,
+    delete_ticket as zammad_delete_ticket,
 )
 
 router = APIRouter()
@@ -52,6 +58,7 @@ def _classify(description: str) -> tuple[Optional[str], Optional[str]]:
     return None, None
 
 
+# Back-compat list endpoint
 @router.get("/get_all_tickets")
 def list_tickets(
     request: Request,
@@ -73,6 +80,73 @@ def list_tickets(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Preferred list endpoint
+@router.get("/tickets")
+def list_tickets_v2(
+    request: Request,
+    state_id: int | None = None,
+    limit: int = 50,
+):
+    try:
+        client = get_client(request)
+        items = zammad_list_tickets(client, state_id=state_id, limit=limit)
+        return {"count": len(items), "tickets": items}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/tickets/{ticket_id}")
+def get_ticket(request: Request, ticket_id: int):
+    try:
+        client = get_client(request)
+        item = zammad_get_ticket(client, ticket_id)
+        return {"ticket": item}
+    except HTTPException:
+        raise
+    except Exception as e:
+        msg = str(e)
+        if "not found" in msg.lower():
+            raise HTTPException(status_code=404, detail=msg)
+        raise HTTPException(status_code=500, detail=msg)
+
+
+@router.patch("/tickets/{ticket_id}", response_model=ZammadTicketUpdateResponse)
+def update_ticket(
+    request: Request,
+    ticket_id: int,
+    payload: ZammadTicketUpdateRequest,
+):
+    try:
+        client = get_client(request)
+        data = payload.model_dump(exclude_none=True)
+        updated = zammad_update_ticket(client, ticket_id, data)
+        return ZammadTicketUpdateResponse(success=True, ticket=updated, message="Ticket updated")
+    except HTTPException:
+        raise
+    except Exception as e:
+        msg = str(e)
+        if "not found" in msg.lower():
+            raise HTTPException(status_code=404, detail=msg)
+        raise HTTPException(status_code=500, detail=msg)
+
+
+@router.delete("/tickets/{ticket_id}", response_model=ZammadTicketDeleteResponse)
+def delete_ticket(request: Request, ticket_id: int):
+    try:
+        client = get_client(request)
+        result = zammad_delete_ticket(client, ticket_id)
+        return ZammadTicketDeleteResponse(**result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        msg = str(e)
+        if "not found" in msg.lower():
+            raise HTTPException(status_code=404, detail=msg)
+        raise HTTPException(status_code=500, detail=msg)
 
 
 @router.post("/tickets", response_model=ZammadTicketCreateResponse)

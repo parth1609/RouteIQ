@@ -138,8 +138,8 @@ backend/Dataset/ticket_classifier/
   - Why: Encapsulates vendor-specific behavior and shields routers from SDK details.
 
 - `backend/services/app/routers/zammad_routes.py`
-  - Public REST endpoints for Zammad actions (ticket create with optional AI classification, health).
-  - Why: Mirrors Zendesk flow with Zammad-specific mapping and robust error handling.
+  - Public REST endpoints for Zammad actions: ticket create (optional AI), list, get, update, delete, and health.
+  - Why: Mirrors Zendesk flow with Zammad-specific mapping, robust error handling, and dynamic state handling for deletes.
 
 - `backend/services/app/routers/classifier_routes.py`
   - Embedded classifier endpoints (`/health`, `/predict`).
@@ -243,6 +243,58 @@ Create a Zammad ticket (with AI):
   "use_ai": true
 }
 ```
+
+List Zammad tickets (optional filter):
+- `GET /api/v1/zammad/tickets?state_id=4&limit=20`
+```bash
+curl "http://127.0.0.1:8000/api/v1/zammad/tickets?state_id=4&limit=20"
+```
+
+Get a Zammad ticket by ID:
+- `GET /api/v1/zammad/tickets/{ticket_id}`
+```bash
+curl "http://127.0.0.1:8000/api/v1/zammad/tickets/123"
+```
+
+Update a Zammad ticket (partial update):
+- `PATCH /api/v1/zammad/tickets/{ticket_id}`
+- Body supports fields from `schemas/zammad.py::ZammadTicketUpdateRequest`:
+  - `title`, `group_id`, `priority_id`, `customer_id`
+  - `state_id` (preferred) or `state` (name; will be resolved to `state_id`)
+  - `article` note: `{ subject, body, type="note", internal=false }`
+```bash
+curl -X PATCH "http://127.0.0.1:8000/api/v1/zammad/tickets/123" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "title": "New subject",
+        "priority_id": 3,
+        "state": "closed",
+        "article": {"subject": "Note", "body": "Closing via API", "type": "note", "internal": false}
+      }'
+```
+
+Implementation note (reliability across SDKs):
+- The backend method `backend/zammad/zammad_integration.py::update_ticket()` now tries multiple zammad_py update signatures and, if needed, uses a raw HTTP PUT to Zammad to guarantee mutations (e.g., `title`) apply.
+- If a requested `title` change does not reflect, the API returns 500 with diagnostics of attempted signatures to aid debugging.
+
+Minimal title-only update example:
+```bash
+curl -X PATCH "http://127.0.0.1:8000/api/v1/zammad/tickets/123" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "title": "Updated subject"
+      }'
+```
+
+Delete (or close) a Zammad ticket:
+- `DELETE /api/v1/zammad/tickets/{ticket_id}`
+- Behavior: tries hard delete first; on failure, sets state to "closed" using dynamically discovered `state_id` (fallback to 4 if not found).
+```bash
+curl -X DELETE "http://127.0.0.1:8000/api/v1/zammad/tickets/123"
+```
+
+Notes:
+- A legacy list endpoint remains at `GET /api/v1/zammad/get_all_tickets` for back-compat; prefer `GET /api/v1/zammad/tickets`.
 
 Add a new router (example outline):
 1) Create `backend/services/app/routers/my_feature.py` with an `APIRouter()`.

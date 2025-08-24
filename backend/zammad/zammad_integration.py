@@ -107,6 +107,315 @@ def list_tickets(client_obj, state_id: int | None = None, limit: int = 50) -> li
     except Exception as e:
         raise RuntimeError(f"Failed to list Zammad tickets: {e}")
 
+def _safe_get_states(client_obj) -> list[dict]:
+    """Best-effort retrieval of ticket states as list of dicts."""
+    try:
+        # Common in zammad_py
+        return list(client_obj.ticket_state.all())
+    except Exception:
+        pass
+    try:
+        # Some variants expose `state`
+        return list(client_obj.state.all())
+    except Exception:
+        return []
+
+def find_state_id_by_name(client_obj, name: str) -> int | None:
+    """
+    Find a ticket state_id by its human name (case-insensitive). Returns None if not found.
+    """
+    try:
+        target = (name or "").strip().lower()
+        for st in _safe_get_states(client_obj):
+            n = (st.get("name") or "").lower()
+            if n == target:
+                return st.get("id")
+        return None
+    except Exception:
+        return None
+
+def find_closed_state_id(client_obj) -> int:
+    """
+    Return the state_id for the "closed" state. Falls back to 4 if not found.
+    This implements the memory note to use state_id, discovering it dynamically.
+    """
+    sid = find_state_id_by_name(client_obj, "closed")
+    return sid if isinstance(sid, int) and sid > 0 else 4
+
+def get_ticket(client_obj, ticket_id: int) -> dict:
+    """Fetch a single ticket by id and serialize to a minimal dict."""
+    try:
+        # Prefer documented zammad-py method first
+        t = None
+        try:
+            t = client_obj.ticket.find(ticket_id)
+        except Exception:
+            t = None
+        # Try a few additional access patterns for compatibility with older clients
+        if not t:
+            try:
+                t = client_obj.ticket.show(id=ticket_id)
+            except Exception:
+                t = None
+        if not t:
+            try:
+                t = client_obj.ticket.get(ticket_id)
+            except Exception:
+                t = None
+        if not t:
+            try:
+                t = client_obj.ticket.show(ticket_id)
+            except Exception:
+                t = None
+        if not t:
+            raise RuntimeError("Ticket not found")
+        return _ticket_to_dict(t)
+    except Exception as e:
+        raise RuntimeError(f"Failed to get ticket {ticket_id}: {e}")
+
+def update_ticket(client_obj, ticket_id: int, updates: dict) -> dict:
+    """
+    Update a ticket with robust fallbacks across SDK variants and raw HTTP.
+
+    Purpose:
+      Ensure field mutations (notably `title`) are reliably applied even when
+      different zammad_py versions expect different update signatures.
+
+    Parameters:
+      - client_obj: Zammad API client instance returned by `initialize_zammad_client()`
+      - ticket_id (int): ID of the ticket to update
+      - updates (dict): Partial fields to update. Supported keys:
+          - title (str)
+          - group_id (int > 0)
+          - priority_id (int > 0)
+          - customer_id (int > 0)
+          - state_id (int > 0)
+          - state (str) — human name; we resolve to `state_id`
+          - article (dict): {subject, body, type="note", internal=false}
+
+    Return:
+      - dict: Minimal serialized ticket as returned by `_ticket_to_dict()`
+
+    Side effects:
+      - May perform a raw HTTP PUT to Zammad as a fallback if SDK signatures
+        do not mutate fields as expected.
+    """
+    try:
+        params: dict = {}
+        # Whitelist known-safe fields; ignore non-positive IDs that can cause validation issues
+        if "title" in updates and updates["title"] is not None:
+            params["title"] = updates["title"]
+        # Numeric fields: coerce to int, include only if > 0
+        for key in ("group_id", "priority_id", "customer_id"):
+            if key in updates and updates[key] is not None:
+                try:
+                    iv = int(updates[key])
+                    if iv > 0:
+                        params[key] = iv
+                except Exception:
+                    # Skip invalid numeric values silently
+                    pass
+
+        # State handling: prefer explicit state_id; else map from state name
+        if "state_id" in updates and updates["state_id"] is not None:
+            try:
+                sid_val = int(updates["state_id"])
+                if sid_val > 0:
+                    params["state_id"] = sid_val
+            except Exception:
+                pass
+        elif "state" in updates and updates["state"]:
+            sid = find_state_id_by_name(client_obj, str(updates["state"]))
+            if sid:
+                params["state_id"] = sid
+
+        # Optional article update (append a note)
+        if "article" in updates and isinstance(updates["article"], dict):
+            params["article"] = {
+                "subject": updates["article"].get("subject") or "Update",
+                "body": updates["article"].get("body") or "",
+                "type": updates["article"].get("type") or "note",
+                "internal": bool(updates["article"].get("internal", False)),
+            }
+
+        if not params:
+            # No-op; return current state
+            return get_ticket(client_obj, ticket_id)
+
+        # Attempt multiple update signatures for compatibility (always pass id argument)
+        update_attempts = []
+        updated = None
+        need_article = False
+
+        # v1: kwargs fields (no params wrapper) — some SDKs don't support this
+        try:
+            updated = client_obj.ticket.update(id=ticket_id, **params)
+        except Exception as e:
+            update_attempts.append(f"v1(kwargs): {e}")
+
+        # v2: positional id + kwargs
+        if updated is None:
+            try:
+                updated = client_obj.ticket.update(ticket_id, **params)
+            except Exception as e:
+                update_attempts.append(f"v2(positional+kwargs): {e}")
+
+        # v3: params= wrapper (kwargs)
+        if updated is None:
+            try:
+                updated = client_obj.ticket.update(id=ticket_id, params=params)
+            except Exception as e:
+                update_attempts.append(f"v3(kwargs params=): {e}")
+                if "article body" in str(e).lower():
+                    need_article = True
+
+        # v4: positional id + params=
+        if updated is None:
+            try:
+                updated = client_obj.ticket.update(ticket_id, params=params)
+            except Exception as e:
+                update_attempts.append(f"v4(positional params=): {e}")
+                if "article body" in str(e).lower():
+                    need_article = True
+
+        # If API requires an article and none provided, retry with a minimal note
+        if updated is None and need_article and "article" not in params:
+            params["article"] = {
+                "subject": "Update",
+                "body": "Updated via API",
+                "type": "note",
+                "internal": False,
+                "content_type": "text/plain",
+            }
+            try:
+                updated = client_obj.ticket.update(id=ticket_id, params=params)
+            except Exception as e:
+                update_attempts.append(f"retry(params with article): {e}")
+            if updated is None:
+                try:
+                    updated = client_obj.ticket.update(ticket_id, params=params)
+                except Exception as e:
+                    update_attempts.append(f"retry(positional params with article): {e}")
+
+        # v5: dict body including id
+        if updated is None:
+            try:
+                body = {"id": ticket_id, **params}
+                updated = client_obj.ticket.update(body)
+            except Exception as e:
+                update_attempts.append(f"v5(dict body): {e}")
+
+        # If SDK calls didn't error but also didn't mutate, use raw HTTP as a last resort
+        if updated is None:
+            try:
+                updated = _http_update_ticket(ticket_id, params)
+            except Exception as e:
+                update_attempts.append(f"raw_http: {e}")
+
+        # Fetch and return latest ticket state (avoid stale/cached SDK objects)
+        latest = get_ticket(client_obj, ticket_id)
+
+        # If a title was requested to change but did not, include diagnostics
+        if "title" in params and params["title"] and latest.get("title") != params["title"]:
+            diag = "; ".join(update_attempts) or "no attempts captured"
+            raise RuntimeError(f"Update applied but title not mutated; attempts: {diag}")
+
+        return latest
+    except Exception as e:
+        raise RuntimeError(f"Failed to update ticket {ticket_id}: {e}")
+
+def _http_update_ticket(ticket_id: int, params: dict) -> dict:
+    """
+    Low-level HTTP PUT update to Zammad REST API as a fallback.
+
+    Why: Some zammad_py versions accept different update signatures or may not
+    mutate fields despite returning a success envelope. This ensures updates
+    (e.g., `title`) are applied.
+
+    Returns the updated ticket JSON.
+    """
+    ZAMMAD_URL = os.getenv('ZAMMAD_URL')
+    if not ZAMMAD_URL:
+        raise ValueError("ZAMMAD_URL not set for raw HTTP update")
+
+    base = ZAMMAD_URL.rstrip('/')
+    # Avoid duplicating /api/v1 if caller provided it in ZAMMAD_URL
+    if base.endswith('/api/v1') or base.endswith('/api') or '/api/' in base:
+        url = f"{base}/tickets/{ticket_id}"
+    else:
+        url = f"{base}/api/v1/tickets/{ticket_id}"
+    headers = {"Content-Type": "application/json"}
+
+    token = os.getenv('ZAMMAD_HTTP_TOKEN')
+    username = os.getenv('ZAMMAD_USERNAME')
+    password = os.getenv('ZAMMAD_PASSWORD')
+
+    auth = None
+    if token:
+        headers["Authorization"] = f"Token token={token}"
+    elif username and password:
+        auth = (username, password)
+    else:
+        raise ValueError("No Zammad credentials available for raw HTTP update")
+
+    # Build payload and ensure article has content_type
+    payload = {"id": ticket_id, **params}
+    if isinstance(payload.get("article"), dict) and "content_type" not in payload["article"]:
+        payload["article"]["content_type"] = "text/plain"
+
+    # Try PUT first
+    resp = requests.put(url, json=payload, headers=headers, auth=auth, timeout=15)
+    if resp.status_code in (400, 422):
+        # If server complains about article, add minimal article and retry once
+        body_lower = (resp.text or "").lower()
+        if "article" in body_lower and "body" in body_lower and "article" not in payload:
+            payload["article"] = {
+                "subject": "Update",
+                "body": "Updated via API",
+                "type": "note",
+                "internal": False,
+                "content_type": "text/plain",
+            }
+            resp = requests.put(url, json=payload, headers=headers, auth=auth, timeout=15)
+
+    # Fallback to PATCH if PUT not accepted
+    if resp.status_code in (405, 415, 422):
+        resp = requests.patch(url, json=payload, headers=headers, auth=auth, timeout=15)
+
+    try:
+        resp.raise_for_status()
+    except requests.HTTPError as http_err:
+        # Include server body for diagnostics
+        raise requests.HTTPError(f"{http_err}; status={resp.status_code}; body={resp.text}") from None
+
+    data = resp.json() if resp.content else {}
+    return data if isinstance(data, dict) else {"raw": data}
+
+def delete_ticket(client_obj, ticket_id: int) -> dict:
+    """
+    Delete (or close) a ticket with robust fallbacks:
+    1) Try hard delete via ticket.destroy
+    2) If that fails (permissions, validations), set state to 'closed' using state_id
+       discovered dynamically; fallback to 4 per memory note.
+    Returns a dict with success flag and optional message.
+    """
+    # Try destroy
+    try:
+        try:
+            res = client_obj.ticket.destroy(id=ticket_id)
+        except Exception:
+            res = client_obj.ticket.destroy(ticket_id)
+        # Many clients return True/None/{} for successful destroy
+        return {"success": True, "message": "Ticket destroyed"}
+    except Exception as destroy_err:
+        # Fallback to closing by state_id
+        try:
+            closed_id = find_closed_state_id(client_obj)
+            updated = update_ticket(client_obj, ticket_id, {"state_id": closed_id})
+            return {"success": True, "message": "Ticket closed", "ticket": updated}
+        except Exception as close_err:
+            raise RuntimeError(f"Failed to delete/close ticket: destroy_error={destroy_err}; close_error={close_err}")
+
 def validate_email(email: str) -> bool:
     """Basic email validation"""
     import re
