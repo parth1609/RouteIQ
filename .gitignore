@@ -214,3 +214,6 @@ Model/gpt2-it-ticket-classifier
 *.npy
 
 gemini.md
+
+# personal docs
+/docs

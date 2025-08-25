@@ -231,11 +231,16 @@ def update_ticket(client_obj, ticket_id: int, updates: dict) -> dict:
 
         # Optional article update (append a note)
         if "article" in updates and isinstance(updates["article"], dict):
+            art = updates["article"]
+            body_val = (art.get("body") or "").strip()
+            if not body_val:
+                # Zammad often requires a non-empty body on updates
+                body_val = "Updated via API"
             params["article"] = {
-                "subject": updates["article"].get("subject") or "Update",
-                "body": updates["article"].get("body") or "",
-                "type": updates["article"].get("type") or "note",
-                "internal": bool(updates["article"].get("internal", False)),
+                "subject": art.get("subject") or "Update",
+                "body": body_val,
+                "type": art.get("type") or "note",
+                "internal": bool(art.get("internal", False)),
             }
 
         if not params:
@@ -278,13 +283,13 @@ def update_ticket(client_obj, ticket_id: int, updates: dict) -> dict:
                 if "article body" in str(e).lower():
                     need_article = True
 
-        # If API requires an article and none provided, retry with a minimal note
-        if updated is None and need_article and "article" not in params:
+        # If API requires an article and body is missing/empty, retry with a minimal note
+        if updated is None and need_article and ("article" not in params or not (params["article"].get("body") or "").strip()):
             params["article"] = {
-                "subject": "Update",
+                "subject": params.get("article", {}).get("subject") or "Update",
                 "body": "Updated via API",
-                "type": "note",
-                "internal": False,
+                "type": params.get("article", {}).get("type") or "note",
+                "internal": bool(params.get("article", {}).get("internal", False)),
                 "content_type": "text/plain",
             }
             try:
@@ -368,12 +373,12 @@ def _http_update_ticket(ticket_id: int, params: dict) -> dict:
     if resp.status_code in (400, 422):
         # If server complains about article, add minimal article and retry once
         body_lower = (resp.text or "").lower()
-        if "article" in body_lower and "body" in body_lower and "article" not in payload:
+        if "article" in body_lower and "body" in body_lower and ("article" not in payload or not (payload["article"].get("body") or "").strip()):
             payload["article"] = {
-                "subject": "Update",
+                "subject": payload.get("article", {}).get("subject") or "Update",
                 "body": "Updated via API",
-                "type": "note",
-                "internal": False,
+                "type": payload.get("article", {}).get("type") or "note",
+                "internal": bool(payload.get("article", {}).get("internal", False)),
                 "content_type": "text/plain",
             }
             resp = requests.put(url, json=payload, headers=headers, auth=auth, timeout=15)
