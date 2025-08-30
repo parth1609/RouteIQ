@@ -4,6 +4,7 @@ import json
 import sys
 from datetime import datetime
 from dotenv import load_dotenv
+import requests
 
 # Add the current directory to Python path to import our modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -16,6 +17,9 @@ from zendesk.zendesk_integration import ZendeskIntegration
 
 # Load environment variables
 load_dotenv()
+
+# Backend API base for FastAPI services
+API_BASE = os.getenv('ROUTEIQ_API_BASE', 'http://127.0.0.1:8000/api/v1')
 
 # Page configuration
 st.set_page_config(
@@ -220,6 +224,117 @@ def create_zammad_ticket_with_api(ticket_data):
     except Exception as e:
         return None, str(e)
 
+def fastapi_zammad_create_ticket(ticket_data):
+    """Create a ticket in Zammad using the FastAPI service"""
+    try:
+        # Prepare API request
+        url = f"{API_BASE}/zammad/tickets"
+        response = requests.post(url, json=ticket_data, timeout=20)
+        if response.ok:
+            return response.json(), None
+        # Try to surface backend-provided detail
+        try:
+            return None, response.json().get("detail") or response.text
+        except Exception:
+            return None, response.text
+    except Exception as e:
+        return None, str(e)
+
+def fastapi_zammad_health():
+    """Check Zammad API health via FastAPI backend."""
+    try:
+        url = f"{API_BASE}/zammad/health"
+        resp = requests.get(url, timeout=10)
+        if resp.ok:
+            return resp.json(), None
+        try:
+            return None, resp.json().get('detail') or resp.text
+        except Exception:
+            return None, resp.text
+    except Exception as e:
+        return None, str(e)
+
+def fastapi_zammad_list_tickets():
+    """List tickets via FastAPI backend. Uses v2 endpoint and falls back if needed."""
+    try:
+        url = f"{API_BASE}/zammad/tickets"
+        resp = requests.get(url, timeout=20)
+        if resp.ok:
+            return resp.json(), None
+        # Fallback to legacy get_all_tickets endpoint if exposed
+        try:
+            fb = requests.get(f"{API_BASE}/zammad/get_all_tickets", timeout=20)
+            if fb.ok:
+                return fb.json(), None
+            try:
+                return None, fb.json().get('detail') or fb.text
+            except Exception:
+                return None, fb.text
+        except Exception:
+            pass
+        try:
+            return None, resp.json().get('detail') or resp.text
+        except Exception:
+            return None, resp.text
+    except Exception as e:
+        return None, str(e)
+
+def fastapi_zammad_get_ticket(ticket_id: int):
+    """Get a single ticket by ID via FastAPI backend."""
+    try:
+        url = f"{API_BASE}/zammad/tickets/{ticket_id}"
+        resp = requests.get(url, timeout=15)
+        if resp.ok:
+            return resp.json(), None
+        try:
+            return None, resp.json().get('detail') or resp.text
+        except Exception:
+            return None, resp.text
+    except Exception as e:
+        return None, str(e)
+
+def fastapi_zammad_update_ticket(ticket_id: int, update_data: dict):
+    """Update ticket via FastAPI backend."""
+    try:
+        url = f"{API_BASE}/zammad/tickets/{ticket_id}"
+        resp = requests.patch(url, json=update_data, timeout=20)
+        if resp.ok:
+            return resp.json(), None
+        try:
+            return None, resp.json().get('detail') or resp.text
+        except Exception:
+            return None, resp.text
+    except Exception as e:
+        return None, str(e)
+
+def fastapi_zammad_delete_ticket(ticket_id: int):
+    """Delete/close ticket via FastAPI backend."""
+    try:
+        url = f"{API_BASE}/zammad/tickets/{ticket_id}"
+        resp = requests.delete(url, timeout=20)
+        if resp.ok:
+            return resp.json() if resp.text else {"success": True}, None
+        try:
+            return None, resp.json().get('detail') or resp.text
+        except Exception:
+            return None, resp.text
+    except Exception as e:
+        return None, str(e)
+
+def fastapi_zendesk_health():
+    """Check Zendesk API health via FastAPI backend."""
+    try:
+        url = f"{API_BASE}/zendesk/health"
+        resp = requests.get(url, timeout=10)
+        if resp.ok:
+            return resp.json(), None
+        try:
+            return None, resp.json().get('detail') or resp.text
+        except Exception:
+            return None, resp.text
+    except Exception as e:
+        return None, str(e)
+
 def create_zendesk_ticket(client, ticket_data):
     """Create a ticket in Zendesk"""
     try:
@@ -245,21 +360,46 @@ def create_zendesk_ticket(client, ticket_data):
         return None, str(e)
 
 def search_zammad_tickets(client, search_type, search_query):
-    """Search tickets in Zammad"""
+    """Search tickets in Zammad via FastAPI.
+    For Ticket ID, calls the ticket GET endpoint. For other searches, lists tickets and filters client-side.
+    """
     try:
         if search_type == "Ticket ID":
-            ticket = client.ticket.find(int(search_query))
-            return [ticket] if ticket else []
-        elif search_type == "Customer Email":
-            # Search by customer email
-            tickets = client.ticket.search(query=f"customer.email:{search_query}")
-            return tickets if tickets else []
-        elif search_type == "Title":
-            # Search by title
-            tickets = client.ticket.search(query=f"title:{search_query}")
-            return tickets if tickets else []
+            data, err = fastapi_zammad_get_ticket(int(search_query))
+            if err:
+                st.error(f"Error fetching ticket: {err}")
+                return []
+            return [data] if data else []
         else:
-            return []
+            tickets, err = fastapi_zammad_list_tickets()
+            if err:
+                st.error(f"Error listing tickets: {err}")
+                return []
+            if not tickets:
+                return []
+            # Normalize to list
+            if isinstance(tickets, dict) and 'tickets' in tickets:
+                tickets = tickets['tickets']
+            results = []
+            q = str(search_query).lower()
+            for t in tickets:
+                try:
+                    if search_type == "Customer Email":
+                        # Try common shapes
+                        email = (
+                            (t.get('customer_email')) if isinstance(t, dict) else None
+                        )
+                        if not email and isinstance(t, dict) and isinstance(t.get('customer'), dict):
+                            email = t['customer'].get('email')
+                        if email and q in str(email).lower():
+                            results.append(t)
+                    elif search_type == "Title":
+                        title = t.get('title') if isinstance(t, dict) else None
+                        if title and q in str(title).lower():
+                            results.append(t)
+                except Exception:
+                    continue
+            return results
     except Exception as e:
         st.error(f"Error searching Zammad tickets: {str(e)}")
         return []
@@ -289,18 +429,18 @@ def search_zendesk_tickets(client, search_type, search_query):
         return []
 
 def get_all_zammad_tickets(client, limit=50):
-    """Get all tickets from Zammad"""
+    """Get all tickets from Zammad via FastAPI."""
     try:
-        tickets = client.ticket.all()
-        # Convert to list and limit results
-        ticket_list = []
-        count = 0
-        for ticket in tickets:
-            if count >= limit:
-                break
-            ticket_list.append(ticket)
-            count += 1
-        return ticket_list
+        tickets, err = fastapi_zammad_list_tickets()
+        if err:
+            st.error(f"Error fetching Zammad tickets: {err}")
+            return []
+        if not tickets:
+            return []
+        if isinstance(tickets, dict) and 'tickets' in tickets:
+            tickets = tickets['tickets']
+        # Limit results
+        return list(tickets)[:limit]
     except Exception as e:
         st.error(f"Error fetching Zammad tickets: {str(e)}")
         return []
@@ -315,15 +455,11 @@ def get_all_zendesk_tickets(client, limit=50):
         return []
 
 def update_zammad_ticket(client, ticket_id, update_data):
-    """Update a ticket in Zammad"""
+    """Update a ticket in Zammad via FastAPI."""
     try:
-        # First get the ticket to ensure it exists
-        existing_ticket = client.ticket.find(ticket_id)
-        if not existing_ticket:
-            return None, f"Ticket with ID {ticket_id} not found"
-        
-        # Update the ticket
-        result = client.ticket.update(ticket_id, update_data)
+        result, err = fastapi_zammad_update_ticket(ticket_id, update_data)
+        if err:
+            return None, err
         return result, None
     except Exception as e:
         return None, str(e)
@@ -352,43 +488,14 @@ def update_zendesk_ticket(client, ticket_id, update_data):
         return None, str(e)
 
 def delete_zammad_ticket(client, ticket_id):
-    """Delete a ticket in Zammad"""
+    """Delete/close a ticket in Zammad via FastAPI."""
     try:
-        # First check if ticket exists
-        existing_ticket = client.ticket.find(ticket_id)
-        if not existing_ticket:
-            return None, f"Ticket with ID {ticket_id} not found"
-        
-        # Zammad doesn't typically allow ticket deletion, but we can try to close it
-        # Use state_id instead of state name (closed state typically has ID 4)
-        try:
-            # Try to get the closed state ID
-            states = client.ticket_state.all()
-            closed_state_id = None
-            for state in states:
-                if hasattr(state, 'name') and state.name.lower() == 'closed':
-                    closed_state_id = state.id
-                    break
-                elif isinstance(state, dict) and state.get('name', '').lower() == 'closed':
-                    closed_state_id = state.get('id')
-                    break
-            
-            if closed_state_id:
-                result = client.ticket.update(ticket_id, {'state_id': closed_state_id})
-            else:
-                # Fallback to state_id 4 (commonly closed)
-                result = client.ticket.update(ticket_id, {'state_id': 4})
-            
-            return result, None
-        except Exception as update_error:
-            # If update fails, try the destroy method
-            try:
-                result = client.ticket.destroy(ticket_id)
-                return result, None
-            except Exception as destroy_error:
-                return None, f"Cannot delete ticket: {str(update_error)}. Also failed to destroy: {str(destroy_error)}"
+        result, err = fastapi_zammad_delete_ticket(ticket_id)
+        if err:
+            return None, err
+        return result, None
     except Exception as e:
-        return None, f"Error accessing ticket: {str(e)}"
+        return None, f"Error deleting ticket: {str(e)}"
 
 def delete_zendesk_ticket(client, ticket_id):
     """Delete a ticket in Zendesk"""
@@ -570,14 +677,43 @@ with st.sidebar:
         st.error("Zendesk: Not Connected")
         
     # Add FastAPI health check status to sidebar
+    # Classifier health
     try:
         health_status = check_classifier_health()
         if health_status.get("status") == "healthy":
-            st.success(f"✅ FastAPI Classifier: Online (v{health_status.get('version', 'unknown')})")
+            st.success(f"✅ Classifier: Online (v{health_status.get('version', 'unknown')})")
         else:
-            st.warning("⚠️ FastAPI Classifier: Offline")
+            st.warning("⚠️ Classifier: Offline")
     except Exception:
-        st.warning("⚠️ FastAPI Classifier: Unavailable")
+        st.warning("⚠️ Classifier: Unavailable")
+    
+    # Zammad API health
+    try:
+        z_health, z_err = fastapi_zammad_health()
+        if z_err:
+            st.warning(f"⚠️ Zammad API: {z_err}")
+        else:
+            status = z_health.get('status') or z_health.get('message') or 'unknown'
+            if str(status).lower() in ("ok", "healthy", "online"):
+                st.success("✅ Zammad API: Online")
+            else:
+                st.warning(f"⚠️ Zammad API: {status}")
+    except Exception:
+        st.warning("⚠️ Zammad API: Unavailable")
+    
+    # Zendesk API health
+    try:
+        zd_health, zd_err = fastapi_zendesk_health()
+        if zd_err:
+            st.warning(f"⚠️ Zendesk API: {zd_err}")
+        else:
+            status = zd_health.get('status') or zd_health.get('message') or 'unknown'
+            if str(status).lower() in ("ok", "healthy", "online"):
+                st.success("✅ Zendesk API: Online")
+            else:
+                st.warning(f"⚠️ Zendesk API: {status}")
+    except Exception:
+        st.warning("⚠️ Zendesk API: Unavailable")
     
     # Environment variables check
     st.subheader("🔐 Environment Variables")
@@ -672,6 +808,8 @@ with tab1:
             
             if system == "Zammad":
                 ticket_data['group'] = group
+                # include permission creation preference for missing groups
+                ticket_data['create_if_missing'] = create_if_missing
             elif system == "Zendesk":
                 ticket_data['assignee_email'] = assignee_email
                 ticket_data['assignee_name'] = assignee_name
@@ -679,177 +817,7 @@ with tab1:
             # Create ticket
             with st.spinner(f"Creating ticket in {system}..."):
                 if system == "Zammad":
-                    # Use auto-group assignment when selected
-                    if group == "Auto (Use AI)":
-                        # Step 2 & 3: Predict department and resolve existing group before attempting creation
-                        handled = False
-                        try:
-                            # Predict department
-                            cls = predict_ticket_category(description)
-                            dept = (cls.get("department") if isinstance(cls, dict) else None) or "General"
-                            # Apply prefix policy for existence check (we prefer no prefix for new groups per spec)
-                            target_group = dept
-                            # Resolve existing groups
-                            z_client = getattr(st.session_state, 'zammad_client', None)
-                            if not z_client:
-                                z_client = initialize_zammad_client()
-                                st.session_state.zammad_client = z_client
-                            groups_now = get_all_groups(z_client) if z_client else {}
-                            resolved_group = None
-                            for gname in groups_now.keys():
-                                if gname.lower() == target_group.lower():
-                                    resolved_group = gname
-                                    break
-                            if resolved_group:
-                                # Group exists -> assign directly
-                                retry_ticket_data = dict(ticket_data)
-                                retry_ticket_data['group'] = resolved_group
-                                result, error = create_zammad_ticket(z_client, retry_ticket_data)
-                                if not error and isinstance(result, dict):
-                                    result.setdefault("assigned_group", resolved_group)
-                                    result.setdefault("new_group_created", False)
-                                    result.setdefault("permission_warning", False)
-                                    result.setdefault("group", resolved_group)
-                                handled = True
-                            else:
-                                # Group missing -> ask for permission to create
-                                if not create_if_missing:
-                                    st.warning(f"Predicted group '{target_group}' does not exist. Enable 'Allow creating new department/group if missing' to create it now.")
-                                    result, error = None, "Predicted group missing and creation not authorized by user."
-                                    handled = True
-                        except Exception as pree:
-                            # If prediction fails for any reason, fall back to the existing autogroup flow
-                            handled = False
-
-                        if not handled:
-                            # Build Ticket model for auto-group API
-                            z_customer = Customer(
-                                email=customer_email,
-                                firstname=customer_firstname or "",
-                                lastname=customer_lastname or "",
-                            )
-                            z_ticket = Ticket(
-                                title=title,
-                                description=description,
-                                group_name=None,  # trigger prediction path
-                                customer=z_customer,
-                            )
-                            # Step 4: Enforce naming convention (no prefix) when creating new groups per spec
-                            # If user allowed creation, force empty prefix; otherwise keep any env default
-                            group_prefix = "" if create_if_missing else os.getenv("ZAMMAD_GROUP_PREFIX", "")
-                            api_resp = zammad_create_ticket_with_autogroup(z_ticket, prefix=group_prefix)
-                            if api_resp and isinstance(api_resp, dict) and api_resp.get("success"):
-                                # Normalize keys so the UI can render consistently
-                                normalized = dict(api_resp)
-                                resolved = normalized.get("resolved_group") or normalized.get("group")
-                                if resolved:
-                                    normalized.setdefault("assigned_group", resolved)
-                                    normalized.setdefault("group", resolved)
-                                # Surface created_group_name if present in API response
-                                if "created_group_name" not in normalized and normalized.get("new_group_created"):
-                                    normalized["created_group_name"] = resolved
-                                result, error = normalized, None
-                            else:
-                                # Normalize error
-                                msg = api_resp.get("error") if isinstance(api_resp, dict) else "Unknown error"
-                                # Handle duplicate group error gracefully by retrying with existing group
-                                # Consider variations like error_human and case differences
-                                duplicate_taken = False
-                                if isinstance(msg, str) and msg:
-                                    duplicate_taken = ("name has already been taken" in msg.lower()) or ("already exists" in msg.lower())
-                                if not duplicate_taken and isinstance(api_resp, dict):
-                                    human = str(api_resp.get("error_human", ""))
-                                    if human:
-                                        duplicate_taken = "name has already been taken" in human.lower()
-                                if duplicate_taken:
-                                    try:
-                                        # Predict department and resolve to existing group name
-                                        cls = predict_ticket_category(description)
-                                        dept = (cls.get("department") if isinstance(cls, dict) else None) or "General"
-                                        # Apply prefix if configured
-                                        target_group = dept
-                                        if group_prefix and not dept.startswith(group_prefix):
-                                            target_group = f"{group_prefix}{dept}"
-                                        # Resolve case-insensitively to an existing group key
-                                        # Ensure we have a Zammad client available
-                                        z_client = getattr(st.session_state, 'zammad_client', None)
-                                        if not z_client:
-                                            z_client = initialize_zammad_client()
-                                            st.session_state.zammad_client = z_client
-                                        groups_now = get_all_groups(z_client) if z_client else {}
-                                        resolved_group = None
-                                        for gname in groups_now.keys():
-                                            if gname.lower() == target_group.lower():
-                                                resolved_group = gname
-                                                break
-                                        if not resolved_group:
-                                            # Fallback to unprefixed matching
-                                            for gname in groups_now.keys():
-                                                if gname.lower() == dept.lower():
-                                                    resolved_group = gname
-                                                    break
-                                        if resolved_group:
-                                            # Retry using direct flow with resolved existing group
-                                            retry_ticket_data = dict(ticket_data)
-                                            retry_ticket_data['group'] = resolved_group
-                                            result, error = create_zammad_ticket(z_client, retry_ticket_data)
-                                            if not error:
-                                                # Annotate result to reflect recovery path
-                                                if isinstance(result, dict):
-                                                    result.setdefault("assigned_group", resolved_group)
-                                                    result.setdefault("new_group_created", False)
-                                                    result.setdefault("permission_warning", False)
-                                                    # Also surface the group explicitly for UI consistency
-                                                    result.setdefault("group", resolved_group)
-                                            else:
-                                                result, error = None, error
-                                        else:
-                                            # No matching existing group found; surface clear guidance
-                                            result, error = None, (
-                                                "Duplicate group name detected but existing group could not be resolved. "
-                                                "Please verify ZAMMAD_GROUP_PREFIX and ensure the group exists, then try again."
-                                            )
-                                    except Exception as re:
-                                        result, error = None, f"Auto-group retry failed: {str(re)}"
-                                else:
-                                    # If not a duplicate-name case, handle 'No valid group available' by falling back
-                                    fallback_triggered = isinstance(msg, str) and ("no valid group available" in msg.lower())
-                                    if fallback_triggered:
-                                        try:
-                                            z_client = getattr(st.session_state, 'zammad_client', None)
-                                            if not z_client:
-                                                z_client = initialize_zammad_client()
-                                                st.session_state.zammad_client = z_client
-                                            groups_now = get_all_groups(z_client) if z_client else {}
-                                            resolved_group = None
-                                            # Prefer 'Users' if available
-                                            for gname in groups_now.keys():
-                                                if gname.lower() == 'users':
-                                                    resolved_group = gname
-                                                    break
-                                            # Otherwise take first available
-                                            if not resolved_group and groups_now:
-                                                resolved_group = next(iter(groups_now.keys()))
-                                            if resolved_group:
-                                                retry_ticket_data = dict(ticket_data)
-                                                retry_ticket_data['group'] = resolved_group
-                                                result, error = create_zammad_ticket(z_client, retry_ticket_data)
-                                                if not error and isinstance(result, dict):
-                                                    result.setdefault("assigned_group", resolved_group)
-                                                    result.setdefault("new_group_created", False)
-                                                    result.setdefault("permission_warning", True)
-                                                    result.setdefault("fallback_group_used", True)
-                                                    result.setdefault("fallback_group", resolved_group)
-                                                    result.setdefault("group", resolved_group)
-                                            else:
-                                                result, error = None, msg
-                                        except Exception as fe:
-                                            result, error = None, f"Fallback group retry failed: {str(fe)}"
-                                    else:
-                                        result, error = None, msg
-                    else:
-                        # Fallback to existing direct group flow
-                        result, error = create_zammad_ticket(client, ticket_data)
+                    result, error = fastapi_zammad_create_ticket(ticket_data)
                 else:
                     result, error = create_zendesk_ticket(client, ticket_data)
             
@@ -929,11 +897,10 @@ with tab2:
 with tab3:
     st.markdown('<h2 class="section-header">Search & Manage Tickets</h2>', unsafe_allow_html=True)
     
-    # Check if client is initialized
-    client = st.session_state.zammad_client if system == "Zammad" else st.session_state.zendesk_client
-    
-    if not client:
-        st.warning(f"⚠️ Please initialize the {system} client first using the sidebar.")
+    # Check if client is initialized (only needed for Zendesk)
+    client = st.session_state.zendesk_client if system == "Zendesk" else None
+    if system == "Zendesk" and not client:
+        st.warning("⚠️ Please initialize the Zendesk client first using the sidebar.")
         
     
     # Search functionality

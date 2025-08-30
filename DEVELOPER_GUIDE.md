@@ -323,3 +323,68 @@ Add a new router (example outline):
 ---
 
 Maintainers: Add your contact or Slack channel here.
+
+---
+
+## 11) Frontend (Streamlit) Integration with FastAPI for Zammad
+
+Purpose: The Streamlit app now uses the FastAPI gateway exclusively for Zammad CRUD operations. This removes direct SDK coupling and centralizes vendor logic in the backend.
+
+Environment
+- Configure FastAPI base URL in `backend/ticket_management_app.py`:
+```python
+API_BASE = os.getenv('ROUTEIQ_API_BASE', 'http://127.0.0.1:8000/api/v1')
+```
+
+Helpers (defined in `backend/ticket_management_app.py`)
+- `fastapi_zammad_health()`
+- `fastapi_zammad_list_tickets()`
+- `fastapi_zammad_get_ticket(ticket_id)`
+- `fastapi_zammad_update_ticket(ticket_id, update_data)`
+- `fastapi_zammad_delete_ticket(ticket_id)`
+
+Usage examples
+```python
+# List tickets (first 50)
+tickets, err = fastapi_zammad_list_tickets()
+if err:
+    st.error(f"List error: {err}")
+else:
+    if isinstance(tickets, dict) and 'tickets' in tickets:
+        tickets = tickets['tickets']
+    st.write(tickets[:50])
+
+# Get a ticket by ID
+ticket, err = fastapi_zammad_get_ticket(123)
+if err:
+    st.error(f"Get error: {err}")
+else:
+    st.json(ticket)
+
+# Update a ticket (partial)
+payload = {"title": "Updated subject", "state_id": 4}
+result, err = fastapi_zammad_update_ticket(123, payload)
+if err:
+    st.error(f"Update error: {err}")
+else:
+    st.success("Ticket updated")
+
+# Delete/close a ticket
+result, err = fastapi_zammad_delete_ticket(123)
+if err:
+    st.error(f"Delete error: {err}")
+else:
+    st.success("Ticket closed/deleted")
+
+# Health indicators
+z_health, err = fastapi_zammad_health()
+if err:
+    st.warning(f"Zammad API: {err}")
+else:
+    st.success("Zammad API online")
+```
+
+Notes
+- The UI search flow uses `GET /zammad/tickets/{id}` for ID searches and lists+filters locally for title/email.
+- The sidebar shows health for Classifier/Zammad/Zendesk based on FastAPI endpoints.
+- Legacy Zammad SDK imports and client initialization are being deprecated in favor of these helpers.

@@ -14,7 +14,11 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# Global lib directory
+/lib/
+
+# Frontend lib directory is allowed
+!frontend/src/lib/
 lib64/
 parts/
 sdist/
@@ -217,3 +221,4 @@ gemini.md
 
 # personal docs
 /docs
+db.md
