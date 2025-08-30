@@ -10,10 +10,7 @@ import requests
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Import our integration modules
-from zammad.zammad_integration import initialize_zammad_client, get_all_groups, find_or_create_customer
-from zammad.zammad_api import check_classifier_health, predict_ticket_category, create_ticket, Ticket, Customer, TicketPriority
-from zammad.zammad_autogroup_api import create_ticket_with_autogroup as zammad_create_ticket_with_autogroup
-from zendesk.zendesk_integration import ZendeskIntegration
+from zammad.zammad_api import check_classifier_health
 
 # Load environment variables
 load_dotenv()
@@ -69,160 +66,12 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Initialize session state
-if 'zammad_client' not in st.session_state:
-    st.session_state.zammad_client = None
-if 'zendesk_client' not in st.session_state:
-    st.session_state.zendesk_client = None
 if 'ticket_history' not in st.session_state:
     st.session_state.ticket_history = []
 
-def initialize_clients():
-    """Initialize both Zammad and Zendesk clients"""
-    try:
-        # Initialize Zammad client
-        if st.session_state.zammad_client is None:
-            st.session_state.zammad_client = initialize_zammad_client()
-            st.success("✅ Zammad client initialized successfully!")
-    except Exception as e:
-        st.error(f"❌ Failed to initialize Zammad client: {str(e)}")
-    
-    try:
-        # Initialize Zendesk client
-        if st.session_state.zendesk_client is None:
-            st.session_state.zendesk_client = ZendeskIntegration()
-            
-            # Test authentication
-            if st.session_state.zendesk_client.test_authentication():
-                st.success("✅ Zendesk client initialized and authenticated successfully!")
-            else:
-                st.error("❌ Zendesk authentication failed. Please check your credentials.")
-                st.session_state.zendesk_client = None
-    except Exception as e:
-        st.error(f"❌ Failed to initialize Zendesk client: {str(e)}")
-        st.session_state.zendesk_client = None
+## Removed legacy client initialization; all operations now use FastAPI
 
-def create_zammad_ticket(client, ticket_data):
-    """Create a ticket in Zammad"""
-    try:
-        # Find or create customer
-        customer_id = find_or_create_customer(
-            client, 
-            ticket_data['customer_email'],
-            ticket_data.get('customer_firstname', ''),
-            ticket_data.get('customer_lastname', '')
-        )
-        
-        if not customer_id:
-            return None, "Failed to find or create customer"
-        
-        # Get groups
-        groups = get_all_groups(client)
-        group_id = groups.get(ticket_data['group'], 1)  # Default to group 1 if not found
-        
-        # Classify ticket if enabled
-        classification = None
-        if ticket_data.get('enable_classification', False):
-            try:
-                # Check if the classifier API is healthy
-                health_status = check_classifier_health()
-                if health_status.get("status") == "healthy":
-                    # Use FastAPI classifier
-                    prediction = predict_ticket_category(ticket_data['description'])
-                    if prediction.success:
-                        classification = {
-                            "Department": prediction.department,
-                            "Priority": prediction.priority
-                        }
-                        st.info(f"✅ Ticket classified using FastAPI service: {prediction.department} / {prediction.priority}")
-                    else:
-                        st.error(f"❌ FastAPI classification failed: {prediction.error}")
-                else:
-                    st.error(f"❌ FastAPI service unavailable: {health_status.get('message', 'Unknown error')}")
-            except Exception as e:
-                st.error(f"❌ Error with FastAPI service: {str(e)}")
-        
-        # Create ticket
-        ticket_payload = {
-            'title': ticket_data['title'],
-            'group_id': group_id,
-            'customer_id': customer_id,
-            'article': {
-                'subject': ticket_data['title'],
-                'body': ticket_data['description'],
-                'type': 'note',
-                'internal': False
-            }
-        }
-        
-        # Add priority if classified
-        if classification and 'Priority' in classification:
-            # Handle both lowercase and capitalized priority values
-            priority_map = {
-                'low': 1, 'Low': 1,
-                'normal': 2, 'Normal': 2, 'medium': 2, 'Medium': 2,
-                'high': 3, 'High': 3
-            }
-            ticket_payload['priority_id'] = priority_map.get(classification['Priority'], 2)
-        
-        # Create the ticket
-        created_ticket = client.ticket.create(ticket_payload)
-        
-        return created_ticket, None
-        
-    except Exception as e:
-        return None, str(e)
-
-
-def create_zammad_ticket_with_api(ticket_data):
-    """Create a ticket in Zammad using the zammad_api module"""
-    try:
-        # Create Customer object
-        customer = Customer(
-            email=ticket_data['customer_email'],
-            firstname=ticket_data.get('customer_firstname', ''),
-            lastname=ticket_data.get('customer_lastname', '')
-        )
-        
-        # Determine priority and department
-        priority = TicketPriority.NORMAL
-        department = None
-        if ticket_data.get('enable_classification', False):
-            # Try to use FastAPI classifier
-            try:
-                # Check if the classifier API is healthy
-                health_status = check_classifier_health()
-                if health_status.get("status") == "healthy":
-                    # Use FastAPI classifier
-                    prediction = predict_ticket_category(ticket_data['description'])
-                    if prediction.success:
-                        if prediction.priority.lower() == 'high':
-                            priority = TicketPriority.HIGH
-                        elif prediction.priority.lower() == 'low':
-                            priority = TicketPriority.LOW
-                        department = prediction.department
-            except Exception as e:
-                # Log the error but continue with default priority
-                print(f"Error using FastAPI classifier: {str(e)}")
-        
-        # Create Ticket object
-        ticket = Ticket(
-            title=ticket_data['title'],
-            description=ticket_data['description'],
-            customer=customer,
-            group_name=ticket_data.get('group') if not department else department,
-            priority=priority
-        )
-        
-        # Create ticket using the API
-        result = create_ticket(ticket)
-        
-        if result.get("success"):
-            return result.get("ticket"), None
-        else:
-            return None, result.get("error")
-        
-    except Exception as e:
-        return None, str(e)
+## Removed legacy Zammad ticket creation helpers (SDK- and module-based)
 
 def fastapi_zammad_create_ticket(ticket_data):
     """Create a ticket in Zammad using the FastAPI service"""
@@ -335,29 +184,21 @@ def fastapi_zendesk_health():
     except Exception as e:
         return None, str(e)
 
-def create_zendesk_ticket(client, ticket_data):
-    """Create a ticket in Zendesk"""
+def fastapi_zendesk_create_ticket(ticket_data: dict):
+    """Create a ticket in Zendesk via FastAPI backend."""
     try:
-        result = client.create_ticket_with_classification(
-            customer_email=ticket_data['customer_email'],
-            customer_name=f"{ticket_data.get('customer_firstname', '')} {ticket_data.get('customer_lastname', '')}".strip(),
-            assignee_email=ticket_data.get('assignee_email', ''),
-            assignee_name=ticket_data.get('assignee_name', ''),
-            ticket_subject=ticket_data['title'],
-            ticket_description=ticket_data['description'],
-            auto_proceed=True  # Automatically proceed with AI classification in web context
-        )
-        
-        # Handle the new response format
-        if isinstance(result, dict) and result.get('success'):
-            return result, None
-        elif isinstance(result, dict) and not result.get('success'):
-            return None, result.get('error', 'Unknown error occurred')
-        else:
-            return result, None
-            
+        url = f"{API_BASE}/zendesk/tickets"
+        resp = requests.post(url, json=ticket_data, timeout=20)
+        if resp.ok:
+            return resp.json(), None
+        try:
+            return None, resp.json().get('detail') or resp.text
+        except Exception:
+            return None, resp.text
     except Exception as e:
         return None, str(e)
+
+## Removed legacy Zendesk client-based creation helper
 
 def search_zammad_tickets(client, search_type, search_query):
     """Search tickets in Zammad via FastAPI.
@@ -404,29 +245,7 @@ def search_zammad_tickets(client, search_type, search_query):
         st.error(f"Error searching Zammad tickets: {str(e)}")
         return []
 
-def search_zendesk_tickets(client, search_type, search_query):
-    """Search tickets in Zendesk"""
-    try:
-        if search_type == "Ticket ID":
-            ticket = client.zenpy_client.tickets(id=int(search_query))
-            return [ticket] if ticket else []
-        elif search_type == "Customer Email":
-            # First find user by email, then get their tickets
-            users = list(client.zenpy_client.users.search(f"email:{search_query}"))
-            if users:
-                user = users[0]
-                tickets = list(client.zenpy_client.tickets(requester_id=user.id))
-                return tickets
-            return []
-        elif search_type == "Title":
-            # Search by subject
-            tickets = list(client.zenpy_client.search(f"subject:{search_query}", type="ticket"))
-            return tickets
-        else:
-            return []
-    except Exception as e:
-        st.error(f"Error searching Zendesk tickets: {str(e)}")
-        return []
+## Removed legacy Zendesk search helper (no FastAPI endpoints yet)
 
 def get_all_zammad_tickets(client, limit=50):
     """Get all tickets from Zammad via FastAPI."""
@@ -445,14 +264,7 @@ def get_all_zammad_tickets(client, limit=50):
         st.error(f"Error fetching Zammad tickets: {str(e)}")
         return []
 
-def get_all_zendesk_tickets(client, limit=50):
-    """Get all tickets from Zendesk"""
-    try:
-        tickets = list(client.zenpy_client.tickets())[:limit]
-        return tickets
-    except Exception as e:
-        st.error(f"Error fetching Zendesk tickets: {str(e)}")
-        return []
+## Removed legacy Zendesk list helper (no FastAPI endpoints yet)
 
 def update_zammad_ticket(client, ticket_id, update_data):
     """Update a ticket in Zammad via FastAPI."""
@@ -464,28 +276,7 @@ def update_zammad_ticket(client, ticket_id, update_data):
     except Exception as e:
         return None, str(e)
 
-def update_zendesk_ticket(client, ticket_id, update_data):
-    """Update a ticket in Zendesk"""
-    try:
-        from zenpy.lib.api_objects import Ticket
-        
-        # Get the existing ticket
-        existing_ticket = client.zenpy_client.tickets(id=ticket_id)
-        if not existing_ticket:
-            return None, f"Ticket with ID {ticket_id} not found"
-        
-        # Create a new ticket object for update
-        ticket = Ticket(id=ticket_id)
-        
-        # Set the fields to update
-        for key, value in update_data.items():
-            setattr(ticket, key, value)
-        
-        # Update the ticket
-        result = client.zenpy_client.tickets.update(ticket)
-        return result, None
-    except Exception as e:
-        return None, str(e)
+## Removed legacy Zendesk update helper (no FastAPI endpoints yet)
 
 def delete_zammad_ticket(client, ticket_id):
     """Delete/close a ticket in Zammad via FastAPI."""
@@ -497,54 +288,7 @@ def delete_zammad_ticket(client, ticket_id):
     except Exception as e:
         return None, f"Error deleting ticket: {str(e)}"
 
-def delete_zendesk_ticket(client, ticket_id):
-    """Delete a ticket in Zendesk"""
-    try:
-        # Get the ticket first to verify it exists and check its status
-        try:
-            existing_ticket = client.zenpy_client.tickets(id=ticket_id)
-            if not existing_ticket:
-                return None, f"Ticket with ID {ticket_id} not found"
-        except Exception as find_error:
-            return None, f"Ticket with ID {ticket_id} not found: {str(find_error)}"
-        
-        # Check if ticket is already closed
-        if hasattr(existing_ticket, 'status') and existing_ticket.status == 'closed':
-            return existing_ticket, None  # Already closed, consider it "deleted"
-        
-        # Zendesk doesn't allow permanent deletion of tickets
-        # Instead, we'll mark it as deleted (soft delete)
-        from zenpy.lib.api_objects import Ticket, Comment
-        
-        # Try to use Zendesk's delete method first (marks as deleted)
-        try:
-            result = client.zenpy_client.tickets.delete(existing_ticket)
-            return result, None
-        except Exception as delete_error:
-            # If delete doesn't work, try to close the ticket
-            try:
-                # Create a new ticket object for update
-                ticket = Ticket(id=ticket_id)
-                ticket.status = 'closed'
-                ticket.comment = Comment(body='Ticket marked as deleted via RouteIQ management system')
-                
-                result = client.zenpy_client.tickets.update(ticket)
-                return result, None
-            except Exception as close_error:
-                # Last resort - try just changing status to solved first, then closed
-                try:
-                    # First set to solved
-                    ticket_solved = Ticket(id=ticket_id, status='solved')
-                    client.zenpy_client.tickets.update(ticket_solved)
-                    
-                    # Then set to closed
-                    ticket_closed = Ticket(id=ticket_id, status='closed')
-                    result = client.zenpy_client.tickets.update(ticket_closed)
-                    return result, None
-                except Exception as final_error:
-                    return None, f"Cannot delete/close ticket. Delete failed: {str(delete_error)}. Close failed: {str(close_error)}. Final attempt failed: {str(final_error)}"
-    except Exception as e:
-        return None, f"Error processing ticket deletion: {str(e)}"
+## Removed legacy Zendesk delete helper (no FastAPI endpoints yet)
 
 def resolve_zammad_ids(client, ticket):
     """Resolve Zammad ticket IDs to actual names"""
@@ -660,23 +404,7 @@ with st.sidebar:
         help="Choose which ticketing system to use"
     )
     
-    # Initialize clients button
-    if st.button("🔄 Initialize Clients", type="primary"):
-        initialize_clients()
-    
-    # Connection status
-    st.subheader("🔗 Connection Status")
-    if st.session_state.zammad_client:
-        st.success("Zammad: Connected")
-    else:
-        st.error("Zammad: Not Connected")
-        
-    if st.session_state.zendesk_client:
-        st.success("Zendesk: Connected")
-    else:
-        st.error("Zendesk: Not Connected")
-        
-    # Add FastAPI health check status to sidebar
+    # Service health (FastAPI-backed)
     # Classifier health
     try:
         health_status = check_classifier_health()
@@ -734,13 +462,7 @@ tab1, tab2, tab3, tab4 = st.tabs(["📝 Create Ticket", "📊 Ticket History", "
 with tab1:
     st.markdown('<h2 class="section-header">Create New Ticket</h2>', unsafe_allow_html=True)
     
-    # Check if client is initialized
-    client = st.session_state.zammad_client if system == "Zammad" else st.session_state.zendesk_client
-    
-    if not client:
-        st.warning(f"⚠️ Please initialize the {system} client first using the sidebar.")
-        
-    
+    # No client initialization required; FastAPI is used for all operations
     # Create ticket form
     with st.form("create_ticket_form"):
         col1, col2 = st.columns(2)
@@ -760,16 +482,8 @@ with tab1:
             customer_lastname = st.text_input("Customer Last Name", placeholder="Doe")
             
             if system == "Zammad":
-                # Get available groups for Zammad
-                if st.session_state.zammad_client:
-                    try:
-                        groups = get_all_groups(st.session_state.zammad_client)
-                        group_options = ["Auto (Use AI)"] + (list(groups.keys()) if groups else ["Users"])
-                    except Exception:
-                        group_options = ["Auto (Use AI)", "Users"]
-                else:
-                    group_options = ["Auto (Use AI)", "Users"]
-                
+                # Static options; actual routing/creation handled by FastAPI backend
+                group_options = ["Auto (Use AI)", "Users"]
                 group = st.selectbox("Group/Department", group_options)
                 
                 # Step 1: Show instructions before classification and naming convention guidance
@@ -819,7 +533,7 @@ with tab1:
                 if system == "Zammad":
                     result, error = fastapi_zammad_create_ticket(ticket_data)
                 else:
-                    result, error = create_zendesk_ticket(client, ticket_data)
+                    result, error = fastapi_zendesk_create_ticket(ticket_data)
             
             if error:
                 st.error(f"❌ Failed to create ticket: {error}")
@@ -897,11 +611,8 @@ with tab2:
 with tab3:
     st.markdown('<h2 class="section-header">Search & Manage Tickets</h2>', unsafe_allow_html=True)
     
-    # Check if client is initialized (only needed for Zendesk)
-    client = st.session_state.zendesk_client if system == "Zendesk" else None
-    if system == "Zendesk" and not client:
-        st.warning("⚠️ Please initialize the Zendesk client first using the sidebar.")
-        
+    # FastAPI-only: no SDK clients required
+    client = None
     
     # Search functionality
     st.subheader("🔍 Search Tickets")
@@ -929,7 +640,8 @@ with tab3:
                 if system == "Zammad":
                     results = search_zammad_tickets(client, search_type, search_query)
                 else:
-                    results = search_zendesk_tickets(client, search_type, search_query)
+                    st.info("Zendesk search will be available once FastAPI endpoints are added (get/list/search).")
+                    results = []
                 
                 st.session_state.search_results = results
                 
@@ -977,7 +689,8 @@ with tab3:
                 if system == "Zammad":
                     tickets = get_all_zammad_tickets(client)
                 else:
-                    tickets = get_all_zendesk_tickets(client)
+                    st.info("Zendesk list will be available once FastAPI endpoints are added (list).")
+                    tickets = []
                 
                 st.session_state.all_tickets = tickets
                 
@@ -1067,7 +780,8 @@ with tab3:
                             if system == "Zammad":
                                 result, error = update_zammad_ticket(client, ticket_id, update_data)
                             else:
-                                result, error = update_zendesk_ticket(client, ticket_id, update_data)
+                                st.info("Zendesk update will be available once FastAPI endpoints are added (update).")
+                                result, error = None, None
                             
                             if error:
                                 st.error(f"❌ Failed to update ticket: {error}")
@@ -1116,7 +830,8 @@ with tab3:
                         if system == "Zammad":
                             result, error = delete_zammad_ticket(client, delete_ticket_id)
                         else:
-                            result, error = delete_zendesk_ticket(client, delete_ticket_id)
+                            st.info("Zendesk delete will be available once FastAPI endpoints are added (delete/close).")
+                            result, error = None, None
                         
                         if error:
                             st.error(f"❌ Failed to delete ticket: {error}")
