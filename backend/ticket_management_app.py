@@ -245,7 +245,29 @@ def search_zammad_tickets(client, search_type, search_query):
         st.error(f"Error searching Zammad tickets: {str(e)}")
         return []
 
-## Removed legacy Zendesk search helper (no FastAPI endpoints yet)
+def search_zendesk_tickets(client, search_type, search_query):
+    """Search tickets in Zendesk"""
+    try:
+        if search_type == "Ticket ID":
+            ticket = client.zenpy_client.tickets(id=int(search_query))
+            return [ticket] if ticket else []
+        elif search_type == "Customer Email":
+            # First find user by email, then get their tickets
+            users = list(client.zenpy_client.users.search(f"email:{search_query}"))
+            if users:
+                user = users[0]
+                tickets = list(client.zenpy_client.tickets(requester_id=user.id))
+                return tickets
+            return []
+        elif search_type == "Title":
+            # Search by subject
+            tickets = list(client.zenpy_client.search(f"subject:{search_query}", type="ticket"))
+            return tickets
+        else:
+            return []
+    except Exception as e:
+        st.error(f"Error searching Zendesk tickets: {str(e)}")
+        return []
 
 def get_all_zammad_tickets(client, limit=50):
     """Get all tickets from Zammad via FastAPI."""
@@ -264,7 +286,14 @@ def get_all_zammad_tickets(client, limit=50):
         st.error(f"Error fetching Zammad tickets: {str(e)}")
         return []
 
-## Removed legacy Zendesk list helper (no FastAPI endpoints yet)
+def get_all_zendesk_tickets(client, limit=50):
+    """Get all tickets from Zendesk"""
+    try:
+        tickets = list(client.zenpy_client.tickets())[:limit]
+        return tickets
+    except Exception as e:
+        st.error(f"Error fetching Zendesk tickets: {str(e)}")
+        return []
 
 def update_zammad_ticket(client, ticket_id, update_data):
     """Update a ticket in Zammad via FastAPI."""
@@ -276,7 +305,28 @@ def update_zammad_ticket(client, ticket_id, update_data):
     except Exception as e:
         return None, str(e)
 
-## Removed legacy Zendesk update helper (no FastAPI endpoints yet)
+def update_zendesk_ticket(client, ticket_id, update_data):
+    """Update a ticket in Zendesk"""
+    try:
+        from zenpy.lib.api_objects import Ticket
+        
+        # Get the existing ticket
+        existing_ticket = client.zenpy_client.tickets(id=ticket_id)
+        if not existing_ticket:
+            return None, f"Ticket with ID {ticket_id} not found"
+        
+        # Create a new ticket object for update
+        ticket = Ticket(id=ticket_id)
+        
+        # Set the fields to update
+        for key, value in update_data.items():
+            setattr(ticket, key, value)
+        
+        # Update the ticket
+        result = client.zenpy_client.tickets.update(ticket)
+        return result, None
+    except Exception as e:
+        return None, str(e)
 
 def delete_zammad_ticket(client, ticket_id):
     """Delete/close a ticket in Zammad via FastAPI."""
@@ -288,7 +338,54 @@ def delete_zammad_ticket(client, ticket_id):
     except Exception as e:
         return None, f"Error deleting ticket: {str(e)}"
 
-## Removed legacy Zendesk delete helper (no FastAPI endpoints yet)
+def delete_zendesk_ticket(client, ticket_id):
+    """Delete a ticket in Zendesk"""
+    try:
+        # Get the ticket first to verify it exists and check its status
+        try:
+            existing_ticket = client.zenpy_client.tickets(id=ticket_id)
+            if not existing_ticket:
+                return None, f"Ticket with ID {ticket_id} not found"
+        except Exception as find_error:
+            return None, f"Ticket with ID {ticket_id} not found: {str(find_error)}"
+        
+        # Check if ticket is already closed
+        if hasattr(existing_ticket, 'status') and existing_ticket.status == 'closed':
+            return existing_ticket, None  # Already closed, consider it "deleted"
+        
+        # Zendesk doesn't allow permanent deletion of tickets
+        # Instead, we'll mark it as deleted (soft delete)
+        from zenpy.lib.api_objects import Ticket, Comment
+        
+        # Try to use Zendesk's delete method first (marks as deleted)
+        try:
+            result = client.zenpy_client.tickets.delete(existing_ticket)
+            return result, None
+        except Exception as delete_error:
+            # If delete doesn't work, try to close the ticket
+            try:
+                # Create a new ticket object for update
+                ticket = Ticket(id=ticket_id)
+                ticket.status = 'closed'
+                ticket.comment = Comment(body='Ticket marked as deleted via RouteIQ management system')
+                
+                result = client.zenpy_client.tickets.update(ticket)
+                return result, None
+            except Exception as close_error:
+                # Last resort - try just changing status to solved first, then closed
+                try:
+                    # First set to solved
+                    ticket_solved = Ticket(id=ticket_id, status='solved')
+                    client.zenpy_client.tickets.update(ticket_solved)
+                    
+                    # Then set to closed
+                    ticket_closed = Ticket(id=ticket_id, status='closed')
+                    result = client.zenpy_client.tickets.update(ticket_closed)
+                    return result, None
+                except Exception as final_error:
+                    return None, f"Cannot delete/close ticket. Delete failed: {str(delete_error)}. Close failed: {str(close_error)}. Final attempt failed: {str(final_error)}"
+    except Exception as e:
+        return None, f"Error processing ticket deletion: {str(e)}"
 
 def resolve_zammad_ids(client, ticket):
     """Resolve Zammad ticket IDs to actual names"""
