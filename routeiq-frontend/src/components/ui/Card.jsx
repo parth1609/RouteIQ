@@ -5,16 +5,22 @@ import { cn } from '@/lib/utils'
  * Card component for content containers
  * Provides consistent styling with shadow and border
  */
-const Card = React.forwardRef(({ className, ...props }, ref) => (
-  <div
-    ref={ref}
-    className={cn(
-      "rounded-lg border bg-white shadow-sm",
-      className
-    )}
-    {...props}
-  />
-))
+const Card = React.forwardRef(({ className, variant = 'default', ...props }, ref) => {
+  const variants = {
+    default: "rounded-xl border-2 border-transparent bg-card-gradient shadow-brand hover:shadow-brand-lg transition-all duration-300 hover:scale-[1.02] relative overflow-hidden",
+    gradient: "rounded-xl border-2 border-brand-mid/20 bg-brand-subtle shadow-brand hover:shadow-brand-lg transition-all duration-300 hover:scale-[1.02] relative overflow-hidden",
+    outlined: "rounded-xl border-2 border-brand-gradient bg-white shadow-brand hover:shadow-brand-lg transition-all duration-300 hover:scale-[1.02] relative overflow-hidden",
+    elevated: "rounded-xl border-0 bg-white shadow-brand-lg hover:shadow-2xl transition-all duration-300 hover:scale-[1.02] relative overflow-hidden"
+  }
+  
+  return (
+    <div
+      ref={ref}
+      className={cn(variants[variant], className)}
+      {...props}
+    />
+  )
+})
 Card.displayName = "Card"
 
 const CardHeader = React.forwardRef(({ className, ...props }, ref) => (
@@ -26,11 +32,12 @@ const CardHeader = React.forwardRef(({ className, ...props }, ref) => (
 ))
 CardHeader.displayName = "CardHeader"
 
-const CardTitle = React.forwardRef(({ className, ...props }, ref) => (
+const CardTitle = React.forwardRef(({ className, gradient = false, ...props }, ref) => (
   <h3
     ref={ref}
     className={cn(
       "text-2xl font-semibold leading-none tracking-tight",
+      gradient ? "bg-brand-gradient bg-clip-text text-transparent" : "text-gray-900",
       className
     )}
     {...props}

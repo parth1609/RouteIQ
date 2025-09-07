@@ -1,20 +1,20 @@
+/* Import Google Fonts */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100;200;300;400;500;600;700;800;900&display=swap');
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
 
+/* Tailwind CSS imports */
+@import "tailwindcss";
+
+/* Base layer styles */
 @layer base {
   :root {
     font-family: Inter, system-ui, sans-serif;
     line-height: 1.5;
     font-weight: 400;
-    
     color-scheme: light;
     color: #111827;
     background-color: #FAFAFA;
-    
     font-synthesis: none;
-    text-rendering: optimizeLegibility;
+    text-rendering: optimizelegibility;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
@@ -30,21 +30,31 @@
   }
 }
 
+/* Component layer styles */
 @layer components {
   .brand-gradient {
-    @apply bg-gradient-to-r from-brand-start via-brand-mid to-brand-end;
+    background: linear-gradient(135deg, #FF6B35 0%, #D63384 50%, #0EA5E9 100%);
   }
   
   .brand-text {
-    @apply bg-gradient-to-r from-brand-start via-brand-mid to-brand-end bg-clip-text text-transparent;
+    background: linear-gradient(135deg, #FF6B35 0%, #D63384 50%, #0EA5E9 100%);
+    background-clip: text;
+    color: transparent;
   }
   
   .glass-effect {
-    @apply bg-white/80 backdrop-blur-sm border border-gray-200/50;
+    background-color: rgb(255 255 255 / 80%);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgb(229 231 235 / 50%);
   }
   
   .card-shadow {
-    @apply shadow-sm hover:shadow-md transition-shadow duration-200;
+    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 10%), 0 1px 2px 0 rgb(0 0 0 / 6%);
+    transition: box-shadow 0.2s ease-in-out;
+  }
+  
+  .card-shadow:hover {
+    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 10%), 0 2px 4px -1px rgb(0 0 0 / 6%);
   }
 }
 
@@ -53,6 +63,7 @@ a {
   color: #646cff;
   text-decoration: inherit;
 }
+
 a:hover {
   color: #535bf2;
 }
@@ -62,34 +73,54 @@ h1 {
   line-height: 1.1;
 }
 
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
+/* Removed Vite template button overrides to avoid clobbering Tailwind styles */
+
+/* Utility layer: fallback classes to guarantee gradients/animations exist */
+@layer utilities {
+  /* Brand gradients */
+  .bg-brand-gradient { background-image: linear-gradient(135deg, #FF6B35 0%, #D63384 50%, #0EA5E9 100%); }
+  .bg-brand-gradient-horizontal { background-image: linear-gradient(90deg, #FF6B35 0%, #D63384 50%, #0EA5E9 100%); }
+  .bg-brand-gradient-vertical { background-image: linear-gradient(180deg, #FF6B35 0%, #D63384 50%, #0EA5E9 100%); }
+  .bg-brand-gradient-reverse { background-image: linear-gradient(135deg, #0EA5E9 0%, #D63384 50%, #FF6B35 100%); }
+  .bg-brand-subtle { background-image: linear-gradient(135deg, rgba(255, 107, 53, 0.1) 0%, rgba(14, 165, 233, 0.1) 100%); }
+  .bg-brand-light { background-image: linear-gradient(135deg, #FF8A5B 0%, #E85A9B 50%, #38BDF8 100%); }
+  .bg-brand-animated { background-image: linear-gradient(-45deg, #FF6B35, #D63384, #8B5CF6, #0EA5E9); }
+
+  /* Page and card backgrounds */
+  .bg-page-gradient { background-image: linear-gradient(135deg, rgba(255, 107, 53, 0.05) 0%, rgba(14, 165, 233, 0.05) 100%); }
+  .bg-card-gradient { background-image: linear-gradient(135deg, #FFFFFF 0%, #F8FAFC 100%); }
+
+  /* Semantic gradients */
+  .bg-success-gradient { background-image: linear-gradient(135deg, #34D399, #10B981, #059669); }
+  .bg-warning-gradient { background-image: linear-gradient(135deg, #FBBF24, #F59E0B, #D97706); }
+  .bg-error-gradient { background-image: linear-gradient(135deg, #F87171, #EF4444, #DC2626); }
+  .bg-info-gradient { background-image: linear-gradient(135deg, #60A5FA, #3B82F6, #2563EB); }
+  .bg-gray-gradient { background-image: linear-gradient(135deg, #F3F4F6, #E5E7EB, #D1D5DB); }
+
+  /* Gradient text helper */
+  .text-gradient-brand {
+    background-image: linear-gradient(135deg, #FF6B35 0%, #D63384 50%, #0EA5E9 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* Shadows */
+  .shadow-brand { box-shadow: 0 10px 25px -5px rgba(214, 51, 132, 0.25), 0 10px 10px -5px rgba(214, 51, 132, 0.1); }
+  .shadow-brand-lg { box-shadow: 0 25px 50px -12px rgba(214, 51, 132, 0.25); }
+
+  /* Animations */
+  .animate-gradient-shift { animation: gradient-shift 8s ease infinite; }
+  .animate-pulse-brand { animation: pulse-brand 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
+/* Keyframes used by utility animations */
+@keyframes gradient-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+@keyframes pulse-brand {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(214, 51, 132, 0.7); }
+  70% { box-shadow: 0 0 0 10px rgba(214, 51, 132, 0); }
 }

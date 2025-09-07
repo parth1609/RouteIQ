@@ -16,11 +16,14 @@ const Button = React.forwardRef(({
   const baseStyles = "inline-flex items-center justify-center rounded-lg font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
   
   const variants = {
-    default: "bg-gradient-to-r from-brand-start via-brand-mid to-brand-end text-white hover:opacity-90 focus-visible:ring-brand-end",
-    secondary: "bg-gray-100 text-gray-900 hover:bg-gray-200 focus-visible:ring-gray-500",
-    outline: "border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus-visible:ring-brand-end",
-    ghost: "text-gray-700 hover:bg-gray-100 focus-visible:ring-brand-end",
-    destructive: "bg-red-500 text-white hover:bg-red-600 focus-visible:ring-red-500",
+    default: "bg-brand-gradient text-white hover:shadow-brand-lg hover:scale-105 transform transition-all duration-300 focus-visible:ring-brand-mid shadow-brand",
+    secondary: "bg-gradient-to-r from-gray-100 to-gray-200 text-gray-900 hover:from-gray-200 hover:to-gray-300 hover:shadow-lg transform hover:scale-105 transition-all duration-300 focus-visible:ring-gray-500",
+    outline: "border-2 border-brand-mid bg-white text-brand-mid hover:bg-brand-subtle hover:border-brand-mid hover:shadow-brand transform hover:scale-105 transition-all duration-300 focus-visible:ring-brand-end",
+    ghost: "text-brand-mid hover:bg-brand-subtle hover:text-brand-start transform hover:scale-105 transition-all duration-300 focus-visible:ring-brand-end",
+    destructive: "bg-gradient-to-r from-error to-error-dark text-white hover:shadow-error hover:scale-105 transform transition-all duration-300 focus-visible:ring-error",
+    success: "bg-gradient-to-r from-success to-success-dark text-white hover:shadow-success hover:scale-105 transform transition-all duration-300 focus-visible:ring-success",
+    warning: "bg-gradient-to-r from-warning to-warning-dark text-white hover:shadow-warning hover:scale-105 transform transition-all duration-300 focus-visible:ring-warning",
+    info: "bg-gradient-to-r from-info to-info-dark text-white hover:shadow-info hover:scale-105 transform transition-all duration-300 focus-visible:ring-info",
   }
   
   const sizes = {

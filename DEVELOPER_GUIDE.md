@@ -313,6 +313,33 @@ Add a new router (example outline):
 - Email validation error on optional assignee
   - Empty strings are coerced to `null`; send `""` or omit.
 
+- Header dropdown (Sign Out) hidden or not clickable
+  - Symptom: Clicking the avatar shows a menu, but it appears clipped or cannot be clicked.
+  - Cause: The header used `overflow-hidden` which clips absolutely positioned dropdowns, and the gradient overlay layer could intercept clicks.
+  - Fix: Allow overflow and make the overlay non-interactive.
+    ```jsx
+    // file: routeiq-frontend/src/components/layout/Header.jsx
+    <header className="bg-brand-gradient shadow-brand border-b-0 relative overflow-visible">
+      <div
+        className="absolute inset-0 bg-brand-animated opacity-20 animate-gradient-shift pointer-events-none"
+        style={{ backgroundSize: '400% 400%' }}
+      />
+      {/* ... menu container remains with z-50 */}
+    </header>
+    ```
+  - Notes: Keep the dropdown wrapper with a high z-index (e.g., `z-50`) so it stacks above the background.
+
+- TailwindCSS lint: "Unknown at rule @tailwind"
+  - Symptom: IDE/stylelint warns on `@tailwind base/components/utilities` in `src/index.css`.
+  - Cause: Linter doesn't recognize Tailwind's custom at-rules. Tailwind v4 prefers a single CSS import.
+  - Fix: Replace the three at-rules with a single import and keep your custom layers.
+    ```css
+    /* src/index.css */
+    /* Tailwind CSS imports */
+    @import "tailwindcss";
+    ```
+  - Ensure your PostCSS pipeline includes `@tailwindcss/postcss` so Tailwind processes the CSS.
+
 ---
 
 ## 10) Next Steps & Extensions
@@ -382,9 +409,3 @@ if err:
     st.warning(f"Zammad API: {err}")
 else:
     st.success("Zammad API online")
-```
-
-Notes
-- The UI search flow uses `GET /zammad/tickets/{id}` for ID searches and lists+filters locally for title/email.
-- The sidebar shows health for Classifier/Zammad/Zendesk based on FastAPI endpoints.
-- Legacy Zammad SDK imports and client initialization are being deprecated in favor of these helpers.
