@@ -63,7 +63,7 @@ RouteIQ is an AI-powered ticket management system that integrates with Zammad an
 ### Start the API (FastAPI Gateway)
 From `backend/services/app`:
 ```bash
-uvicorn main:app --reload --host 127.0.0.1 --port 8000
+python -m uvicorn backend.services.app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 Health checks:
 - API: http://127.0.0.1:8000/api/v1/health
