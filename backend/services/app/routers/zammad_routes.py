@@ -58,8 +58,8 @@ def _classify(description: str) -> tuple[Optional[str], Optional[str]]:
     return None, None
 
 
-# Back-compat list endpoint
-@router.get("/get_all_tickets")
+# List all tickets
+@router.get("/tickets")
 def list_tickets(
     request: Request,
     state_id: int | None = None,
@@ -72,23 +72,6 @@ def list_tickets(
     - /api/v1/zammad/tickets?state_id=4
     - /api/v1/zammad/tickets?limit=20
     """
-    try:
-        client = get_client(request)
-        items = zammad_list_tickets(client, state_id=state_id, limit=limit)
-        return {"count": len(items), "tickets": items}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# Preferred list endpoint
-@router.get("/tickets")
-def list_tickets_v2(
-    request: Request,
-    state_id: int | None = None,
-    limit: int = 50,
-):
     try:
         client = get_client(request)
         items = zammad_list_tickets(client, state_id=state_id, limit=limit)
