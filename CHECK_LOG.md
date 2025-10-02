@@ -63,11 +63,14 @@ This document captures how the project has been built so far: key components, se
 - `GET /api/v1/health`
 - Zendesk (`backend/services/app/routers/zendesk_routes.py`):
   - `GET /api/v1/zendesk/health`
+  - `GET /api/v1/zendesk/tickets`
+  - `GET /api/v1/zendesk/tickets/{ticket_id}`
+  - `PATCH /api/v1/zendesk/tickets/{ticket_id}`
+  - `DELETE /api/v1/zendesk/tickets/{ticket_id}`
   - `POST /api/v1/zendesk/tickets`
 - Zammad (`backend/services/app/routers/zammad_routes.py`):
   - `GET /api/v1/zammad/health`
   - `GET /api/v1/zammad/tickets`
-  - `GET /api/v1/zammad/get_all_tickets` (legacy)
   - `GET /api/v1/zammad/tickets/{ticket_id}`
   - `PATCH /api/v1/zammad/tickets/{ticket_id}`
   - `DELETE /api/v1/zammad/tickets/{ticket_id}`

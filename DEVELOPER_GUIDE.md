@@ -230,6 +230,41 @@ Create a Zendesk ticket (with AI):
 }
 ```
 
+List Zendesk tickets (optional limit):
+- `GET /api/v1/zendesk/tickets?limit=50`
+```bash
+curl "http://127.0.0.1:8000/api/v1/zendesk/tickets?limit=25"
+```
+
+Get a Zendesk ticket by ID:
+- `GET /api/v1/zendesk/tickets/{ticket_id}`
+```bash
+curl "http://127.0.0.1:8000/api/v1/zendesk/tickets/123"
+```
+
+Update a Zendesk ticket (partial update):
+- `PATCH /api/v1/zendesk/tickets/{ticket_id}`
+- Body supports fields from `schemas/zendesk.py::TicketUpdateRequest`:
+  - `subject`, `priority` (one of: low, normal, high, urgent), `status` (new, open, pending, hold, solved, closed)
+  - `assignee_email` (email will be resolved to `assignee_id`)
+```bash
+curl -X PATCH "http://127.0.0.1:8000/api/v1/zendesk/tickets/123" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "subject": "Reset MFA",
+        "priority": "high",
+        "status": "open",
+        "assignee_email": "agent@example.com"
+      }'
+```
+
+Delete (or close) a Zendesk ticket:
+- `DELETE /api/v1/zendesk/tickets/{ticket_id}`
+- Behavior: tries hard delete first; on failure, falls back to status transitions (solved -> closed). If already closed, returns success.
+```bash
+curl -X DELETE "http://127.0.0.1:8000/api/v1/zendesk/tickets/123"
+```
+
 Create a Zammad ticket (with AI):
 - `POST /api/v1/zammad/tickets`
 - Body:
@@ -294,7 +329,7 @@ curl -X DELETE "http://127.0.0.1:8000/api/v1/zammad/tickets/123"
 ```
 
 Notes:
-- A legacy list endpoint remains at `GET /api/v1/zammad/get_all_tickets` for back-compat; prefer `GET /api/v1/zammad/tickets`.
+- Zammad list endpoint is `GET /api/v1/zammad/tickets`.
 
 Add a new router (example outline):
 1) Create `backend/services/app/routers/my_feature.py` with an `APIRouter()`.

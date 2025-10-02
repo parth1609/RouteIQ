@@ -51,3 +51,4 @@ regex
 PyYAML
 orjson
 uv
+python-multipart

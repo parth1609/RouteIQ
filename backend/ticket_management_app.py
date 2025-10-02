@@ -198,6 +198,66 @@ def fastapi_zendesk_create_ticket(ticket_data: dict):
     except Exception as e:
         return None, str(e)
 
+
+def fastapi_zendesk_list_tickets(limit: int = 50):
+    """List Zendesk tickets via FastAPI backend."""
+    try:
+        url = f"{API_BASE}/zendesk/tickets?limit={int(limit)}"
+        resp = requests.get(url, timeout=20)
+        if resp.ok:
+            return resp.json(), None
+        try:
+            return None, resp.json().get('detail') or resp.text
+        except Exception:
+            return None, resp.text
+    except Exception as e:
+        return None, str(e)
+
+
+def fastapi_zendesk_get_ticket(ticket_id: int):
+    """Get a Zendesk ticket by ID via FastAPI backend."""
+    try:
+        url = f"{API_BASE}/zendesk/tickets/{ticket_id}"
+        resp = requests.get(url, timeout=15)
+        if resp.ok:
+            return resp.json(), None
+        try:
+            return None, resp.json().get('detail') or resp.text
+        except Exception:
+            return None, resp.text
+    except Exception as e:
+        return None, str(e)
+
+
+def fastapi_zendesk_update_ticket(ticket_id: int, update_data: dict):
+    """Update a Zendesk ticket via FastAPI backend (partial update)."""
+    try:
+        url = f"{API_BASE}/zendesk/tickets/{ticket_id}"
+        resp = requests.patch(url, json=update_data, timeout=20)
+        if resp.ok:
+            return resp.json(), None
+        try:
+            return None, resp.json().get('detail') or resp.text
+        except Exception:
+            return None, resp.text
+    except Exception as e:
+        return None, str(e)
+
+
+def fastapi_zendesk_delete_ticket(ticket_id: int):
+    """Delete/close a Zendesk ticket via FastAPI backend."""
+    try:
+        url = f"{API_BASE}/zendesk/tickets/{ticket_id}"
+        resp = requests.delete(url, timeout=20)
+        if resp.ok:
+            return resp.json() if resp.text else {"success": True}, None
+        try:
+            return None, resp.json().get('detail') or resp.text
+        except Exception:
+            return None, resp.text
+    except Exception as e:
+        return None, str(e)
+
 ## Removed legacy Zendesk client-based creation helper
 
 def search_zammad_tickets(client, search_type, search_query):
@@ -475,15 +535,21 @@ def format_ticket_for_display(ticket, system, client=None):
             "Updated": safe_get(ticket, 'updated_at')
         }
     else:  # Zendesk
+        def zget(obj, key, default='N/A'):
+            if isinstance(obj, dict):
+                val = obj.get(key, default)
+                return str(val) if val is not None and val != default else default
+            return getattr(obj, key, default)
+
         return {
-            "ID": getattr(ticket, 'id', 'N/A'),
-            "Subject": getattr(ticket, 'subject', 'N/A'),
-            "Status": getattr(ticket, 'status', 'N/A'),
-            "Priority": getattr(ticket, 'priority', 'N/A'),
-            "Requester ID": getattr(ticket, 'requester_id', 'N/A'),
-            "Assignee ID": getattr(ticket, 'assignee_id', 'N/A'),
-            "Created": getattr(ticket, 'created_at', 'N/A'),
-            "Updated": getattr(ticket, 'updated_at', 'N/A')
+            "ID": zget(ticket, 'id'),
+            "Subject": zget(ticket, 'subject'),
+            "Status": zget(ticket, 'status'),
+            "Priority": zget(ticket, 'priority'),
+            "Requester ID": zget(ticket, 'requester_id'),
+            "Assignee ID": zget(ticket, 'assignee_id'),
+            "Created": zget(ticket, 'created_at'),
+            "Updated": zget(ticket, 'updated_at')
         }
 
 def main():
@@ -737,8 +803,35 @@ with tab3:
                 if system == "Zammad":
                     results = search_zammad_tickets(client, search_type, search_query)
                 else:
-                    st.info("Zendesk search will be available once FastAPI endpoints are added (get/list/search).")
+                    # Zendesk search via FastAPI
                     results = []
+                    try:
+                        if search_type == "Ticket ID":
+                            data, err = fastapi_zendesk_get_ticket(int(search_query))
+                            if err:
+                                st.error(f"Error fetching ticket: {err}")
+                            else:
+                                # API shape: {"ticket": {...}}
+                                if isinstance(data, dict) and data.get("ticket"):
+                                    results = [data["ticket"]]
+                        elif search_type == "Title":
+                            data, err = fastapi_zendesk_list_tickets()
+                            if err:
+                                st.error(f"Error listing tickets: {err}")
+                            else:
+                                items = data.get("tickets", []) if isinstance(data, dict) else []
+                                q = str(search_query).lower()
+                                for t in items:
+                                    try:
+                                        subj = (t.get("subject") if isinstance(t, dict) else getattr(t, "subject", None))
+                                        if subj and q in str(subj).lower():
+                                            results.append(t)
+                                    except Exception:
+                                        continue
+                        else:  # Customer Email not directly supported without user lookup
+                            st.info("Customer Email search is not yet supported for Zendesk in the UI. Use Ticket ID or Title.")
+                    except ValueError:
+                        st.warning("Please enter a numeric Ticket ID")
                 
                 st.session_state.search_results = results
                 
@@ -786,8 +879,12 @@ with tab3:
                 if system == "Zammad":
                     tickets = get_all_zammad_tickets(client)
                 else:
-                    st.info("Zendesk list will be available once FastAPI endpoints are added (list).")
-                    tickets = []
+                    data, err = fastapi_zendesk_list_tickets()
+                    if err:
+                        st.error(f"Error fetching Zendesk tickets: {err}")
+                        tickets = []
+                    else:
+                        tickets = data.get("tickets", []) if isinstance(data, dict) else []
                 
                 st.session_state.all_tickets = tickets
                 
@@ -877,8 +974,7 @@ with tab3:
                             if system == "Zammad":
                                 result, error = update_zammad_ticket(client, ticket_id, update_data)
                             else:
-                                st.info("Zendesk update will be available once FastAPI endpoints are added (update).")
-                                result, error = None, None
+                                result, error = fastapi_zendesk_update_ticket(ticket_id, update_data)
                             
                             if error:
                                 st.error(f"❌ Failed to update ticket: {error}")
@@ -927,8 +1023,7 @@ with tab3:
                         if system == "Zammad":
                             result, error = delete_zammad_ticket(client, delete_ticket_id)
                         else:
-                            st.info("Zendesk delete will be available once FastAPI endpoints are added (delete/close).")
-                            result, error = None, None
+                            result, error = fastapi_zendesk_delete_ticket(delete_ticket_id)
                         
                         if error:
                             st.error(f"❌ Failed to delete ticket: {error}")
